@@ -9,7 +9,6 @@
         <OptimizationPreference>Speed</OptimizationPreference>
         <InvariantGlobalization>true</InvariantGlobalization>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-
         <SupportedOSPlatformVersion>5.1</SupportedOSPlatformVersion>
     </PropertyGroup>
 
@@ -19,7 +18,6 @@
 
     <ItemGroup>
       <PackageReference Include="VC-LTL" Version="5.3.1" />
-      <PackageReference Include="YY-Thunks" Version="1.2.2" />
     </ItemGroup>
 
 </Project>
