@@ -1,4 +1,7 @@
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Unicode;
 using QcomImageUtils.Models;
 
 [JsonSourceGenerationOptions(
@@ -11,4 +14,12 @@ using QcomImageUtils.Models;
 [JsonSerializable(typeof(QcomImageComponentVerificationResult[]))]
 [JsonSerializable(typeof(QcomImageVerificationResult))]
 [JsonSerializable(typeof(QcomImageVerificationResult[]))]
-internal partial class AppJsonSerializerContext : JsonSerializerContext;
+internal partial class AppJsonSerializerContext : JsonSerializerContext
+{
+    public static AppJsonSerializerContext Unicode { get; } = new(new JsonSerializerOptions
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
+        WriteIndented = true
+    });
+}

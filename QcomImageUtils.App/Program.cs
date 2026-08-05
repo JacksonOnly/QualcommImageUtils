@@ -5,7 +5,6 @@ using QcomImageUtils.Models;
 using QcomImageUtils.Types;
 
 Console.OutputEncoding = Encoding.UTF8;
-
 bool json = false;
 bool calculateHash = false;
 bool exportPem = false;
@@ -113,11 +112,11 @@ static int ParseImages(
         if (results.Length == 1)
             Console.WriteLine(JsonSerializer.Serialize(
                 results[0],
-                AppJsonSerializerContext.Default.QcomImageParseResult));
+                AppJsonSerializerContext.Unicode.QcomImageParseResult));
         else
             Console.WriteLine(JsonSerializer.Serialize(
                 results,
-                AppJsonSerializerContext.Default.QcomImageParseResultArray));
+                AppJsonSerializerContext.Unicode.QcomImageParseResultArray));
     }
     else
     {
@@ -169,11 +168,11 @@ static int VerifyImages(
         if (results.Length == 1)
             Console.WriteLine(JsonSerializer.Serialize(
                 results[0],
-                AppJsonSerializerContext.Default.QcomImageVerificationResult));
+                AppJsonSerializerContext.Unicode.QcomImageVerificationResult));
         else
             Console.WriteLine(JsonSerializer.Serialize(
                 results,
-                AppJsonSerializerContext.Default.QcomImageVerificationResultArray));
+                AppJsonSerializerContext.Unicode.QcomImageVerificationResultArray));
     }
     else
     {
