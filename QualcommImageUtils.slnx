@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="QcomImageUtils.App/QcomImageUtils.App.csproj" />
+  <Project Path="QcomImageUtils.Tests/QcomImageUtils.Tests.csproj" />
   <Project Path="QcomImageUtils/QcomImageUtils.csproj" />
 </Solution>

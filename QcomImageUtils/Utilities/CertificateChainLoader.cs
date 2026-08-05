@@ -1,80 +1,209 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Formats.Asn1;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using System.Text;
+using QcomImageUtils.Models;
+using QcomImageUtils.Types;
 
 namespace QcomImageUtils.Utilities;
 
+internal sealed class CertificateChainSummary
+{
+    public Dictionary<string, string> Attributes { get; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    public string RootSubject { get; set; } = string.Empty;
+    public string RootSha256 { get; set; } = string.Empty;
+    public string RootSha384 { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 解析连续 DER 编码的 Qualcomm 证书链并验证尾部填充。
+/// </summary>
 internal static class CertificateChainLoader
 {
-    /// <summary>
-    /// 从 DER 编码的字节数组中提取所有 X.509 证书。
-    /// </summary>
-    /// <param name="derData">DER 格式的证书数据（可包含多个连续证书）。</param>
-    /// <returns>证书数组，顺序与数据中出现顺序一致。</returns>
-    /// <exception cref="ArgumentException">数据格式无效或解析失败。</exception>
-    public static X509Certificate2[] LoadCertificatesFromDer(byte[] derData)
+    private const string OrganizationalUnitOid = "2.5.4.11";
+
+    public static bool TryLoad(
+        ReadOnlySpan<byte> data,
+        CertificateChainType chainType,
+        bool exportPem,
+        int maximumCertificateCount,
+        uint? selectedRootSlot,
+        out List<ImageCertItem> certificates,
+        out CertificateChainSummary summary,
+        out string error)
     {
-        if (derData == null || derData.Length == 0)
-            throw new ArgumentException("证书数据不能为空", nameof(derData));
+        certificates = new List<ImageCertItem>(Math.Min(maximumCertificateCount, 4));
+        summary = new CertificateChainSummary();
+        if (!TryReadEncodedCertificates(data, maximumCertificateCount,
+                out List<byte[]> encodedCertificates, out error))
+            return false;
 
-        var certs = new List<X509Certificate2>();
-        int offset = 0;
-
-        while (offset < derData.Length)
+        var rootIndices = new List<int>();
+        var rootHashes = new HashSet<string>(StringComparer.Ordinal);
+        for (int index = 0; index < encodedCertificates.Count; index++)
         {
-            if (certs.Count > 0 && derData[offset] == 0xFF)
-                break;
-            // 检查是否是 SEQUENCE (0x30)
-            if (derData[offset] != 0x30)
-                throw new FormatException($"预期 SEQUENCE 标记 (0x30)，实际在偏移 {offset} 处为 0x{derData[offset]:X2}");
-
-            // 解析长度（支持短格式和长格式）
-            int length;
-            int lengthBytes;
-            if ((derData[offset + 1] & 0x80) == 0) // 短格式
-            {
-                length = derData[offset + 1];
-                lengthBytes = 1;
-            }
-            else // 长格式
-            {
-                int numLenBytes = derData[offset + 1] & 0x7F;
-                if (numLenBytes > 4) // 防止溢出，最大支持 4 字节长度
-                    throw new FormatException($"长度字段过长 ({numLenBytes} 字节)");
-
-                lengthBytes = 1 + numLenBytes;
-                length = 0;
-                for (int i = 0; i < numLenBytes; i++)
-                {
-                    length = (length << 8) | derData[offset + 1 + i + 1];
-                }
-            }
-
-            int totalLength = 1 + lengthBytes + length; // 标签(1) + 长度字段 + 内容
-            if (offset + totalLength > derData.Length)
-                throw new FormatException($"证书数据不完整，预期 {totalLength} 字节，实际剩余 {derData.Length - offset} 字节");
-
-            // 复制该证书的字节块（必须独立副本，因为 X509Certificate2 会持有）
-            byte[] certBytes = new byte[totalLength];
-            Buffer.BlockCopy(derData, offset, certBytes, 0, totalLength);
-
-            // 加载证书
-            X509Certificate2 cert;
+            byte[] encodedCertificate = encodedCertificates[index];
             try
             {
-                cert = new X509Certificate2(certBytes);
-            }
-            catch (Exception ex)
-            {
-                throw new FormatException($"在偏移 {offset} 处解析证书失败", ex);
-            }
+#if NET9_0_OR_GREATER
+                using X509Certificate2 certificate = X509CertificateLoader.LoadCertificate(encodedCertificate);
+#else
+                using var certificate = new X509Certificate2(encodedCertificate);
+#endif
+                if (index == 0)
+                    ReadAttributes(certificate.SubjectName.RawData, summary.Attributes);
 
-            certs.Add(cert);
-            offset += totalLength;
+                string sha256 = HashUtility.ComputeSha256Hex(encodedCertificate);
+                bool isRoot = CertificateChainVerifier.IsSelfSignedCertificate(
+                    encodedCertificate,
+                    certificate);
+                if (isRoot)
+                {
+                    rootIndices.Add(index);
+                    rootHashes.Add(sha256);
+                }
+
+                certificates.Add(new ImageCertItem
+                {
+                    ChainType = chainType,
+                    Index = index,
+                    IsRoot = isRoot,
+                    Subject = certificate.Subject,
+                    Issuer = certificate.Issuer,
+                    SerialNumber = certificate.SerialNumber,
+                    Sha256 = sha256,
+                    CertPem = exportPem ? ExportPem(encodedCertificate) : string.Empty
+                });
+            }
+            catch (CryptographicException exception)
+            {
+                error = $"证书链中的第 {index} 张 X.509 证书无效: {exception.Message}";
+                return false;
+            }
         }
 
-        return certs.ToArray();
+        int? selectedRootIndex = null;
+        if (selectedRootSlot is uint rootSlot)
+        {
+            if (rootSlot >= (uint)rootIndices.Count)
+            {
+                error = $"MRC Root 槽位 {rootSlot} 超出证书包的 {rootIndices.Count} 个 Root 槽位";
+                return false;
+            }
+
+            selectedRootIndex = rootIndices[checked((int)rootSlot)];
+        }
+        else if (rootHashes.Count == 1 && rootIndices.Count > 0)
+        {
+            selectedRootIndex = rootIndices[0];
+        }
+
+        if (selectedRootIndex is int rootIndex)
+        {
+            ImageCertItem root = certificates[rootIndex];
+            summary.RootSubject = root.Subject;
+            summary.RootSha256 = root.Sha256;
+            summary.RootSha384 = HashUtility.ComputeSha384Hex(encodedCertificates[rootIndex]);
+        }
+
+        return true;
+    }
+
+    public static bool TryReadEncodedCertificates(
+        ReadOnlySpan<byte> data,
+        int maximumCertificateCount,
+        out List<byte[]> certificates,
+        out string error)
+    {
+        certificates = new List<byte[]>(Math.Min(maximumCertificateCount, 4));
+        error = string.Empty;
+        int offset = 0;
+
+        while (offset < data.Length)
+        {
+            ReadOnlySpan<byte> remaining = data.Slice(offset);
+            if (remaining[0] is 0x00 or 0xFF)
+            {
+                if (certificates.Count == 0 || !IsPadding(remaining))
+                {
+                    error = $"证书链在偏移 {offset} 处包含无效填充";
+                    return false;
+                }
+
+                break;
+            }
+
+            if (remaining[0] != 0x30)
+            {
+                error = $"证书链在偏移 {offset} 处缺少 DER SEQUENCE 标记";
+                return false;
+            }
+
+            if (certificates.Count >= maximumCertificateCount)
+            {
+                error = $"证书数量超过上限 {maximumCertificateCount}";
+                return false;
+            }
+
+            int bytesConsumed;
+            try
+            {
+                AsnDecoder.ReadEncodedValue(
+                    remaining,
+                    AsnEncodingRules.DER,
+                    out _,
+                    out _,
+                    out bytesConsumed);
+            }
+            catch (AsnContentException exception)
+            {
+                error = $"证书链在偏移 {offset} 处的 DER 数据无效: {exception.Message}";
+                return false;
+            }
+
+            certificates.Add(remaining.Slice(0, bytesConsumed).ToArray());
+            offset += bytesConsumed;
+        }
+
+        if (certificates.Count == 0)
+        {
+            error = "证书链中没有 X.509 证书";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void ReadAttributes(byte[] encodedSubject, Dictionary<string, string> attributes)
+    {
+        IReadOnlyList<string> values = X500NameReader.GetValues(encodedSubject, OrganizationalUnitOid);
+        for (int index = 0; index < values.Count; index++)
+        {
+            string[] parts = values[index].Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 3)
+                attributes[parts[2]] = parts[1];
+        }
+    }
+
+    private static bool IsPadding(ReadOnlySpan<byte> data)
+    {
+        for (int index = 0; index < data.Length; index++)
+        {
+            if (data[index] is not (0x00 or 0xFF))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static string ExportPem(byte[] encodedCertificate)
+    {
+        string body = Convert.ToBase64String(
+            encodedCertificate,
+            Base64FormattingOptions.InsertLineBreaks).Replace("\r\n", "\n");
+        return $"-----BEGIN CERTIFICATE-----\n{body}\n-----END CERTIFICATE-----";
     }
 }

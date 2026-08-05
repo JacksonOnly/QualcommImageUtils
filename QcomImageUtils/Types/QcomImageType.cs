@@ -1,6 +1,6 @@
 ﻿namespace QcomImageUtils.Types;
 
-public enum ImageType
+public enum QcomImageType
 {
     NoneImg = 0,
     OemSblImg = 1,

@@ -3,7 +3,7 @@
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public unsafe struct HashSegmentV7
 {
-    public uint ImageId;
+    public uint Reserved;
     public uint Version;
     public uint CommonMetadataSize;
     public uint MetadataSizeQcom;
@@ -35,8 +35,8 @@ public unsafe struct HashSegmentV7
     public uint SocHwVer9;
     public uint SocHwVer10;
     public uint SocHwVer11;
-    public int SocFeatureId;
-    public int JtagId;
+    public uint SocFeatureId;
+    public uint JtagId;
     public ulong SerialNumber0;
     public ulong SerialNumber1;
     public ulong SerialNumber2;
