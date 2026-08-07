@@ -1801,11 +1801,14 @@ public sealed class FirehoseCommandAnalyzer : IFirehoseCommandAnalyzer
     private static bool IsCrediblePackedCommandPool(List<string> names, int startIndex)
     {
         var coreNames = new HashSet<string>(StringComparer.Ordinal);
+        int knownCommandCount = 0;
         bool hasProgram = false;
         bool hasConfigure = false;
         for (int index = startIndex; index < names.Count; index++)
         {
             string name = names[index];
+            if (KnownCommandNames.Contains(name))
+                knownCommandCount++;
             if (CoreCommandNames.Contains(name))
                 coreNames.Add(name);
             if (name.Equals("program", StringComparison.Ordinal))
@@ -1814,10 +1817,11 @@ public sealed class FirehoseCommandAnalyzer : IFirehoseCommandAnalyzer
                 hasConfigure = true;
         }
 
-        return names.Count - startIndex >= 5
-               && coreNames.Count >= 4
-               && hasProgram
-               && hasConfigure;
+        int commandCount = names.Count - startIndex;
+        return commandCount >= 5
+               && hasConfigure
+               && (hasProgram && coreNames.Count >= 4
+                   || coreNames.Count >= 3 && knownCommandCount == commandCount);
     }
 
     private static void CollectArm32InlineCommands(

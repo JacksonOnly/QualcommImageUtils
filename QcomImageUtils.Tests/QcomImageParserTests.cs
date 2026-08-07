@@ -67,6 +67,25 @@ public sealed class QcomImageParserTests
         Assert.Equal(BinaryImageFactory.ImageId, result.ImageId);
     }
 
+    [Theory]
+    [InlineData((uint)QcomImageType.NoneImg)]
+    [InlineData((uint)QcomImageType.EhostdlImg)]
+    [InlineData((uint)QcomImageType.Sbl1Img)]
+    public void TryParse_LegacyFirehoseCandidateWithoutStructure_IsNotProgrammer(uint imageId)
+    {
+        byte[] image = BinaryImageFactory.CreateElf(
+            BinaryImageFactory.CreateV3(imageId: imageId),
+            true);
+        var parser = new QcomImageParser();
+
+        bool success = parser.TryParse(image, out var result);
+
+        Assert.True(success, result.ErrorMessage);
+        Assert.Equal((QcomImageType)imageId, result.ImageType);
+        Assert.False(result.IsProgrammer);
+        Assert.Empty(result.SupportedCommands);
+    }
+
     [Fact]
     public void TryParse_EightyByteSbl_ReturnsArchitectureAndImageIdentity()
     {
@@ -100,6 +119,23 @@ public sealed class QcomImageParserTests
         Assert.Equal(BinaryImageFactory.ModelId, result.ModelId);
         Assert.Equal(BinaryImageFactory.SocHardwareVersion, result.SocHwVersion);
         Assert.Equal(BinaryImageFactory.AntiRollbackVersion, result.AntiRollbackVersion);
+    }
+
+    [Fact]
+    public void TryParse_V6WithV7ProgrammerSoftwareId_IsNotProgrammer()
+    {
+        byte[] image = BinaryImageFactory.CreateV6(
+            16,
+            128,
+            BinaryImageFactory.ModernProgrammerSoftwareId);
+        var parser = new QcomImageParser();
+
+        bool success = parser.TryParse(image, out var result);
+
+        Assert.True(success, result.ErrorMessage);
+        Assert.Equal(6u, result.HeaderVersion);
+        Assert.Equal(BinaryImageFactory.ModernProgrammerSoftwareId, result.SwId);
+        Assert.False(result.IsProgrammer);
     }
 
     [Fact]
@@ -146,6 +182,25 @@ public sealed class QcomImageParserTests
         Assert.True(result.CertChains[1].IsRoot);
         Assert.Contains("Qcom Test Root", result.RootCaSubject, StringComparison.Ordinal);
         Assert.NotEmpty(result.RootCaHash);
+    }
+
+    [Fact]
+    public void TryParse_CertificateSoftwareIdWithAntiRollbackVersion_IsProgrammer()
+    {
+        const ulong softwareId = 0x0000000200000003;
+        byte[] certificateChain = CertificateChainFactory.CreateWithOuMetadata(softwareId);
+        byte[] image = BinaryImageFactory.CreateV3(certificateChain);
+        var parser = new QcomImageParser(new QcomImageParserOptions
+        {
+            AnalyzeFirehoseCommands = false,
+            ExportCertificatePem = false
+        });
+
+        bool success = parser.TryParse(image, out var result);
+
+        Assert.True(success, result.ErrorMessage);
+        Assert.Equal(softwareId, result.SwId);
+        Assert.True(result.IsProgrammer);
     }
 
     [Theory]

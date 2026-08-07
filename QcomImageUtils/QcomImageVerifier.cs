@@ -48,7 +48,7 @@ public sealed class QcomImageVerifier : IQcomImageVerifier
         {
             CalculateFileSha256 = options.CalculateFileSha256,
             ExportCertificatePem = options.ExportCertificatePem,
-            AnalyzeFirehoseCommands = false,
+            AnalyzeFirehoseCommands = options.AnalyzeFirehoseCommands,
             MaximumImageSize = options.MaximumImageSize,
             MaximumCertificateChainSize = options.MaximumCertificateChainSize,
             MaximumCertificateCount = options.MaximumCertificateCount

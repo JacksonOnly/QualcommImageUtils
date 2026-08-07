@@ -18,6 +18,7 @@ public sealed class QcomImageParser : IQcomImageParser
     private const uint SblMagic = ArmExecutableImageReader.SblMagic;
     private const int SblHeaderSize = ArmExecutableImageReader.SblHeaderSize;
     private const uint ProgrammerSoftwareId = 3;
+    private const uint MbnV7ProgrammerSoftwareId = 0x35;
     private const uint ProgrammerImageId = 5;
 
     private readonly bool _calculateFileSha256;
@@ -129,12 +130,13 @@ public sealed class QcomImageParser : IQcomImageParser
                 _maximumMetadataStringLength,
                 result,
                 selectedElfOffset >= 0 ? selectedElfOffset : null);
-            if (result.IsProgrammer
-                && _firehoseCommandAnalyzer is not null
+            if (_firehoseCommandAnalyzer is not null
+                && ShouldAttemptFirehoseAnalysis(result)
                 && _firehoseCommandAnalyzer.TryAnalyze(
                     image,
                     out FirehoseCommandAnalysisResult commandAnalysis))
             {
+                result.IsProgrammer = true;
                 result.SupportedCommands = commandAnalysis.Commands;
             }
             return Complete(result, true, string.Empty);
@@ -485,11 +487,26 @@ public sealed class QcomImageParser : IQcomImageParser
             }
         }
 
-        result.IsProgrammer = result.SwId == ProgrammerSoftwareId
-                              || result.SwId == 0 && result.ImageId == ProgrammerImageId;
+        // Certificate SW_ID values pack the anti-rollback version into the
+        // upper 32 bits and the image type into the lower 32 bits.
+        uint softwareImageId = (uint)result.SwId;
+        result.IsProgrammer = softwareImageId == ProgrammerSoftwareId
+                              || result.HeaderVersion == 7
+                              && softwareImageId == MbnV7ProgrammerSoftwareId
+                              || result.SwId == 0
+                              && result.ImageId == ProgrammerImageId;
         result.OemType = QualcommMapping.GetOemType(
             result.HasOemId ? result.OemId : null);
         result.SocType = QualcommMapping.GetSocType(result.SocHwVersion, result.MsmId);
+    }
+
+    private static bool ShouldAttemptFirehoseAnalysis(QcomImageParseResult result)
+    {
+        return result.IsProgrammer
+               || result.SwId == 0
+               && result.ImageType is QcomImageType.NoneImg
+                   or QcomImageType.EhostdlImg
+                   or QcomImageType.Sbl1Img;
     }
 
     private static bool Complete(

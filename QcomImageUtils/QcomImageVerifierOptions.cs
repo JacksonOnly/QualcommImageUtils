@@ -11,6 +11,7 @@ public sealed class QcomImageVerifierOptions
     public int MaximumElfComponentCount { get; set; } = 64;
     public bool CalculateFileSha256 { get; set; }
     public bool ExportCertificatePem { get; set; }
+    public bool AnalyzeFirehoseCommands { get; set; }
     public IReadOnlyCollection<string> TrustedRootCertificateHashes { get; set; } =
         Array.Empty<string>();
 }

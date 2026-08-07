@@ -145,6 +145,7 @@ static int VerifyImages(
         {
             CalculateFileSha256 = calculateHash,
             ExportCertificatePem = exportPem,
+            AnalyzeFirehoseCommands = true,
             TrustedRootCertificateHashes = trustedRootHashes
         });
     }

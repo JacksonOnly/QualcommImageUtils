@@ -779,6 +779,93 @@ public sealed class FirehoseCommandAnalyzerTests
     }
 
     [Fact]
+    public void TryParse_V7FirehoseElf_IncludesCommandsInNormalParseResult()
+    {
+        byte[] image = CreateElf(
+            is64Bit: true,
+            prefixLength: 0,
+            machine: 183,
+            commands: ["program", "read", "nop", "configure"],
+            includeDispatchText: true,
+            includeSigDiagnostic: false,
+            extraStrings: [],
+            includeQualcommHashSegment: true,
+            qualcommHashSegmentVersion: 7,
+            qualcommSoftwareId: BinaryImageFactory.ModernProgrammerSoftwareId);
+        var parser = new QcomImageParser(new QcomImageParserOptions
+        {
+            ExportCertificatePem = false
+        });
+
+        bool success = parser.TryParse(image, out QcomImageParseResult result);
+
+        Assert.True(success, result.ErrorMessage);
+        Assert.Equal(7u, result.HeaderVersion);
+        Assert.Equal(BinaryImageFactory.ModernProgrammerSoftwareId, result.SwId);
+        Assert.True(result.IsProgrammer);
+        Assert.Equal(
+            ["program", "read", "nop", "configure"],
+            result.SupportedCommands.Select(command => command.Name));
+    }
+
+    [Fact]
+    public void TryParse_Sbl1IdentifiedFirehoseElf_IncludesCommands()
+    {
+        byte[] image = CreateElf(
+            is64Bit: true,
+            prefixLength: 0,
+            machine: 183,
+            commands: ["program", "read", "nop", "configure"],
+            includeDispatchText: true,
+            includeSigDiagnostic: false,
+            extraStrings: [],
+            includeQualcommHashSegment: true,
+            qualcommImageId: (uint)QcomImageType.Sbl1Img);
+        var parser = new QcomImageParser(new QcomImageParserOptions
+        {
+            ExportCertificatePem = false
+        });
+
+        bool success = parser.TryParse(image, out QcomImageParseResult result);
+
+        Assert.True(success, result.ErrorMessage);
+        Assert.Equal(QcomImageType.Sbl1Img, result.ImageType);
+        Assert.True(result.IsProgrammer);
+        Assert.Equal(
+            ["program", "read", "nop", "configure"],
+            result.SupportedCommands.Select(command => command.Name));
+    }
+
+    [Theory]
+    [InlineData((uint)QcomImageType.NoneImg)]
+    [InlineData((uint)QcomImageType.EhostdlImg)]
+    public void TryParse_LegacyFirehoseIdentity_IncludesCommands(uint imageId)
+    {
+        string[] commandNames = ["program", "read", "nop", "configure"];
+        byte[] image = CreateElf(
+            is64Bit: true,
+            prefixLength: 0,
+            machine: 183,
+            commands: commandNames,
+            includeDispatchText: true,
+            includeSigDiagnostic: false,
+            extraStrings: [],
+            includeQualcommHashSegment: true,
+            qualcommImageId: imageId);
+        var parser = new QcomImageParser(new QcomImageParserOptions
+        {
+            ExportCertificatePem = false
+        });
+
+        bool success = parser.TryParse(image, out QcomImageParseResult result);
+
+        Assert.True(success, result.ErrorMessage);
+        Assert.Equal((QcomImageType)imageId, result.ImageType);
+        Assert.True(result.IsProgrammer);
+        Assert.Equal(commandNames, result.SupportedCommands.Select(command => command.Name));
+    }
+
+    [Fact]
     public void TryParse_FirehoseAnalysisDisabled_DoesNotIncludeCommands()
     {
         byte[] image = CreateElf(
@@ -1087,6 +1174,45 @@ public sealed class FirehoseCommandAnalyzerTests
             command => Assert.Equal(FirehoseCommandSource.InlineDispatch, command.Source));
     }
 
+    [Fact]
+    public void TryAnalyze_Arm64ReducedKnownCommandPool_ReturnsInlineCommands()
+    {
+        string[] commandNames =
+        [
+            "nop",
+            "patch",
+            "configure",
+            "setbootablestoragedrive",
+            "power",
+            "firmwarewrite",
+            "getstorageinfo",
+            "benchmark",
+            "emmc",
+            "ufs",
+            "fixgpt",
+            "getsha256digest"
+        ];
+        byte[] image = CreateElf(
+            is64Bit: true,
+            prefixLength: 0,
+            machine: 183,
+            commands: commandNames,
+            includeDispatchText: false,
+            includeSigDiagnostic: false,
+            extraStrings: [],
+            includeCommandTable: false,
+            includeCallingHandlerOnly: true);
+        var analyzer = new FirehoseCommandAnalyzer();
+
+        bool success = analyzer.TryAnalyze(image, out FirehoseCommandAnalysisResult result);
+
+        Assert.True(success, result.ErrorMessage);
+        Assert.Equal(commandNames, result.Commands.Select(command => command.Name));
+        Assert.All(
+            result.Commands,
+            command => Assert.Equal(FirehoseCommandSource.InlineDispatch, command.Source));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -1114,6 +1240,26 @@ public sealed class FirehoseCommandAnalyzerTests
                 mappedAddress + 0x400ul + checked((ulong)(index * 4)),
                 command.HandlerAddress);
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TryVerify_FirehoseAnalysisOptionControlsCommands(bool analyzeCommands)
+    {
+        string[] commandNames = ["program", "read", "nop", "patch", "configure", "erase"];
+        byte[] image = CreateSblMbn(isArm64: true, commandNames);
+        var verifier = new QcomImageVerifier(new QcomImageVerifierOptions
+        {
+            AnalyzeFirehoseCommands = analyzeCommands
+        });
+
+        bool completed = verifier.TryVerify(image, out QcomImageVerificationResult result);
+
+        Assert.True(completed, result.ErrorMessage);
+        Assert.Equal(
+            analyzeCommands ? commandNames : [],
+            result.Image.SupportedCommands.Select(command => command.Name));
     }
 
     [Fact]
@@ -1359,7 +1505,10 @@ public sealed class FirehoseCommandAnalyzerTests
         bool includeThumbRegisterComparisonChainCode = false,
         bool includeArm32RegisterComparisonChainCode = false,
         bool useArm64RegisterGetterCall = false,
-        uint? arm64CandidateBoundaryInstruction = null)
+        uint? arm64CandidateBoundaryInstruction = null,
+        int qualcommHashSegmentVersion = 3,
+        uint qualcommSoftwareId = BinaryImageFactory.SoftwareId,
+        uint qualcommImageId = BinaryImageFactory.ImageId)
     {
         const int codeOffset = 0x200;
         const int dataOffset = 0x400;
@@ -1373,7 +1522,10 @@ public sealed class FirehoseCommandAnalyzerTests
         int programHeaderSize = is64Bit ? 56 : 32;
         int pointerSize = is64Bit ? 8 : 4;
         byte[] hashSegment = includeQualcommHashSegment
-            ? BinaryImageFactory.CreateHashSegment(3)
+            ? BinaryImageFactory.CreateHashSegment(
+                qualcommHashSegmentVersion,
+                qualcommSoftwareId,
+                qualcommImageId)
             : [];
         int programHeaderCount = includeQualcommHashSegment ? 3 : 2;
         int imageLength = includeQualcommHashSegment

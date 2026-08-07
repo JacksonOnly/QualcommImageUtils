@@ -250,6 +250,7 @@ Parser 与 Verifier 使用独立选项类型，特别是 `ExportCertificatePem` 
 | --- | --- | --- |
 | `CalculateFileSha256` | `false` | 计算完整输入的 SHA-256 |
 | `ExportCertificatePem` | `false` | 在嵌套解析结果中生成证书 PEM 文本 |
+| `AnalyzeFirehoseCommands` | `false` | 在嵌套解析结果中执行 Firehose 命令静态分析；CLI 验证模式会启用 |
 | `MaximumImageSize` | `512 MiB` | 文件与内存输入的字节上限，最小为 1 B |
 | `MaximumCertificateChainSize` | `1 MiB` | 单个 QTI/OEM 证书包的字节上限，范围为 1 B-64 MiB |
 | `MaximumCertificateCount` | `32` | 单个 QTI/OEM 证书包的证书数量上限，范围为 1-64 |

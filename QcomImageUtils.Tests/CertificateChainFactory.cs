@@ -5,14 +5,17 @@ namespace QcomImageUtils.Tests;
 
 internal static class CertificateChainFactory
 {
-    private static readonly Lazy<byte[]> Chain = new(CreateCore);
+    private const ulong DefaultSoftwareId = 3;
+    private static readonly Lazy<byte[]> Chain = new(() => CreateCore(DefaultSoftwareId));
 
-    public static byte[] CreateWithOuMetadata()
+    public static byte[] CreateWithOuMetadata(ulong softwareId = DefaultSoftwareId)
     {
-        return [.. Chain.Value];
+        return softwareId == DefaultSoftwareId
+            ? [.. Chain.Value]
+            : CreateCore(softwareId);
     }
 
-    private static byte[] CreateCore()
+    private static byte[] CreateCore(ulong softwareId)
     {
         using RSA rootKey = RSA.Create(2048);
         var rootRequest = new CertificateRequest(
@@ -35,7 +38,7 @@ internal static class CertificateChainFactory
 
         using RSA leafKey = RSA.Create(2048);
         var leafRequest = new CertificateRequest(
-            "CN=Qcom Test Leaf, OU=01 0000000000000003 SW_ID, OU=02 000000AB OEM_ID, OU=03 000000CD MODEL_ID, OU=04 00001000 SW_SIZE, OU=05 1234567800AB00CD HW_ID",
+            $"CN=Qcom Test Leaf, OU=01 {softwareId:X16} SW_ID, OU=02 000000AB OEM_ID, OU=03 000000CD MODEL_ID, OU=04 00001000 SW_SIZE, OU=05 1234567800AB00CD HW_ID",
             leafKey,
             HashAlgorithmName.SHA256,
             RSASignaturePadding.Pkcs1);

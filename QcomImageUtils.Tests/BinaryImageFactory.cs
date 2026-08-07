@@ -6,6 +6,7 @@ internal static class BinaryImageFactory
 {
     public const uint ImageId = 5;
     public const uint SoftwareId = 3;
+    public const uint ModernProgrammerSoftwareId = 0x35;
     public const uint HardwareId = 0x1234ABCD;
     public const uint OemId = 0xAB;
     public const uint ModelId = 0xCD;
@@ -20,25 +21,30 @@ internal static class BinaryImageFactory
     private const int Sha384Size = 48;
     private const uint HashSegmentFlags = 0x02200000;
 
-    public static byte[] CreateHashSegment(int version)
+    public static byte[] CreateHashSegment(
+        int version,
+        uint softwareId = SoftwareId,
+        uint imageId = ImageId)
     {
         return version switch
         {
-            3 => CreateV3(),
-            5 => CreateV5(),
-            6 => CreateV6(16, 128),
-            7 => CreateV7(32, 12, 240),
+            3 => CreateV3(imageId: imageId),
+            5 => CreateV5(imageId),
+            6 => CreateV6(16, 128, softwareId, imageId),
+            7 => CreateV7(32, 12, 240, softwareId),
             _ => throw new ArgumentOutOfRangeException(nameof(version))
         };
     }
 
-    public static byte[] CreateV3(byte[]? certificateChain = null)
+    public static byte[] CreateV3(
+        byte[]? certificateChain = null,
+        uint imageId = ImageId)
     {
         certificateChain ??= [];
         int payloadSize = checked(Sha256Size + certificateChain.Length);
         var image = new byte[checked(V3HeaderSize + payloadSize)];
 
-        WriteUInt32(image, 0, ImageId);
+        WriteUInt32(image, 0, imageId);
         WriteUInt32(image, 4, 3);
         WriteUInt32(image, 16, checked((uint)payloadSize));
         WriteUInt32(image, 20, Sha256Size);
@@ -63,11 +69,11 @@ internal static class BinaryImageFactory
         return image;
     }
 
-    public static byte[] CreateV5()
+    public static byte[] CreateV5(uint imageId = ImageId)
     {
         var image = new byte[V5HeaderSize + Sha256Size];
 
-        WriteUInt32(image, 0, ImageId);
+        WriteUInt32(image, 0, imageId);
         WriteUInt32(image, 4, 5);
         WriteUInt32(image, 16, Sha256Size);
         WriteUInt32(image, 20, Sha256Size);
@@ -76,13 +82,17 @@ internal static class BinaryImageFactory
         return image;
     }
 
-    public static byte[] CreateV6(int qtiMetadataSize, int oemMetadataSize)
+    public static byte[] CreateV6(
+        int qtiMetadataSize,
+        int oemMetadataSize,
+        uint softwareId = SoftwareId,
+        uint imageId = ImageId)
     {
         int metadataSize = checked(qtiMetadataSize + oemMetadataSize);
         int payloadSize = checked(metadataSize + Sha384Size);
         var image = new byte[checked(V6HeaderSize + payloadSize)];
 
-        WriteUInt32(image, 0, ImageId);
+        WriteUInt32(image, 0, imageId);
         WriteUInt32(image, 4, 6);
         WriteUInt32(image, 16, checked((uint)payloadSize));
         WriteUInt32(image, 20, Sha384Size);
@@ -94,7 +104,7 @@ internal static class BinaryImageFactory
         {
             WriteUInt32(image, oemOffset, 1);
             WriteUInt32(image, oemOffset + 4, 0);
-            WriteUInt32(image, oemOffset + 8, SoftwareId);
+            WriteUInt32(image, oemOffset + 8, softwareId);
             WriteUInt32(image, oemOffset + 12, HardwareId);
             WriteUInt32(image, oemOffset + 16, OemId);
             WriteUInt32(image, oemOffset + 20, ModelId);
@@ -109,7 +119,8 @@ internal static class BinaryImageFactory
     public static byte[] CreateV7(
         int commonMetadataSize,
         int qtiMetadataSize,
-        int oemMetadataSize)
+        int oemMetadataSize,
+        uint softwareId = SoftwareId)
     {
         int metadataSize = checked(commonMetadataSize + qtiMetadataSize + oemMetadataSize);
         var image = new byte[checked(V7HeaderSize + metadataSize + Sha384Size)];
@@ -124,7 +135,7 @@ internal static class BinaryImageFactory
         {
             WriteUInt32(image, V7HeaderSize, 1);
             WriteUInt32(image, V7HeaderSize + 4, 0);
-            WriteUInt32(image, V7HeaderSize + 8, SoftwareId);
+            WriteUInt32(image, V7HeaderSize + 8, softwareId);
             WriteUInt32(image, V7HeaderSize + 16, 3);
         }
 
