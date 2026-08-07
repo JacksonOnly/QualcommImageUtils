@@ -1,8 +1,6 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.IO;
-using System.Security;
 using QcomImageUtils.Models;
 using QcomImageUtils.Types;
 using QcomImageUtils.Utilities;
@@ -50,6 +48,7 @@ public sealed class QcomImageVerifier : IQcomImageVerifier
         {
             CalculateFileSha256 = options.CalculateFileSha256,
             ExportCertificatePem = options.ExportCertificatePem,
+            AnalyzeFirehoseCommands = false,
             MaximumImageSize = options.MaximumImageSize,
             MaximumCertificateChainSize = options.MaximumCertificateChainSize,
             MaximumCertificateCount = options.MaximumCertificateCount
@@ -59,60 +58,23 @@ public sealed class QcomImageVerifier : IQcomImageVerifier
     public bool TryVerify(string filePath, out QcomImageVerificationResult result)
     {
         result = new QcomImageVerificationResult();
-        if (string.IsNullOrWhiteSpace(filePath))
-            return CompleteFailure(result, "镜像路径不能为空");
-
-        try
+        if (!ImageFileReader.TryRead(
+                filePath,
+                _maximumImageSize,
+                out byte[] image,
+                out string fullPath,
+                out string fileName,
+                out string error))
         {
-            string fullPath = Path.GetFullPath(filePath);
             result.Image.OriginalFilePath = fullPath;
-            result.Image.OriginalFileName = Path.GetFileName(fullPath);
-            using var stream = new FileStream(
-                fullPath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                128 * 1024,
-                FileOptions.SequentialScan);
-            long fileLength = stream.Length;
-            if (fileLength <= 0)
-                return CompleteFailure(result, "镜像文件为空");
-            if (fileLength > _maximumImageSize)
-                return CompleteFailure(result, $"镜像文件超过配置的 {_maximumImageSize} 字节上限");
+            result.Image.OriginalFileName = fileName;
+            return CompleteFailure(result, error);
+        }
 
-#if NET5_0_OR_GREATER
-            byte[] image = GC.AllocateUninitializedArray<byte>(checked((int)fileLength));
-#else
-            var image = new byte[checked((int)fileLength)];
-#endif
-            int offset = 0;
-            while (offset < image.Length)
-            {
-                int read = stream.Read(image, offset, image.Length - offset);
-                if (read == 0)
-                    return CompleteFailure(result, "读取镜像时遇到意外的文件末尾");
-                offset += read;
-            }
-            if (stream.ReadByte() >= 0)
-                return CompleteFailure(result, "读取镜像时文件长度发生变化");
-
-            bool completed = TryVerify(image, out result);
-            result.Image.OriginalFilePath = fullPath;
-            result.Image.OriginalFileName = Path.GetFileName(fullPath);
-            return completed;
-        }
-        catch (FileNotFoundException)
-        {
-            return CompleteFailure(result, "镜像文件不存在");
-        }
-        catch (Exception exception) when (exception is IOException
-                                           or UnauthorizedAccessException
-                                           or SecurityException
-                                           or NotSupportedException
-                                           or ArgumentException)
-        {
-            return CompleteFailure(result, $"无法读取镜像: {exception.Message}");
-        }
+        bool completed = TryVerify(image, out result);
+        result.Image.OriginalFilePath = fullPath;
+        result.Image.OriginalFileName = fileName;
+        return completed;
     }
 
     public bool TryVerify(ReadOnlySpan<byte> image, out QcomImageVerificationResult result)

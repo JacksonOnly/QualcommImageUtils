@@ -1,6 +1,6 @@
 # QcomImageUtils
 
-QcomImageUtils 是面向 Qualcomm ELF/MBN 固件镜像的高性能只读解析与密码学验证工具。它可以识别镜像封装与 MBN 版本，提取镜像、平台、OEM、构建元数据和 QTI/OEM 证书信息，并验证 ELF 哈希表、镜像签名、证书路径、metadata Root 哈希及可选的外部可信 Root。
+QcomImageUtils 是面向 Qualcomm ELF/MBN 固件镜像的高性能只读解析、Firehose 命令分析与密码学验证工具。它可以识别镜像封装与 MBN 版本，提取镜像、平台、OEM、构建元数据和 QTI/OEM 证书信息，静态分析 Firehose 支持命令，并验证 ELF 哈希表、镜像签名、证书路径、metadata Root 哈希及可选的外部可信 Root。
 
 仓库包含两个可直接使用的项目：
 
@@ -10,6 +10,7 @@ QcomImageUtils 是面向 Qualcomm ELF/MBN 固件镜像的高性能只读解析�
 ## 核心能力
 
 - 解析小端 ELF32、ELF64、常规 MBN、SBL MBN 以及 MBN v3、v5、v6、v7 哈希段。
+- 枚举多 ELF/melf 容器中的程序映像，分析 Firehose 命令表及 `handle_xml` 中的内联命令。
 - 提取镜像 ID/类型、SBL 架构、软件/硬件 ID、SoC、OEM、产品型号、防回滚版本和构建字符串。
 - 解析 QTI/OEM DER 证书包，输出主题、颁发者、序列号、SHA-256 和可选 PEM。
 - 重算普通及分页 ELF 段摘要，验证 SHA-1、SHA-256 或 SHA-384 哈希表。
@@ -33,6 +34,9 @@ dotnet build QualcommImageUtils.slnx -c Release
 ```powershell
 dotnet run --project QcomImageUtils.App/QcomImageUtils.App.csproj -c Release -- "xbl.elf"
 ```
+
+正常解析 Firehose programmer 时会同时输出其支持命令，不需要额外的分析选项。
+构建时间从 ARM/Thumb 日志调用点的格式、日期和时间参数恢复；ARM 镜像不会再把未被代码引用的相邻字符串当作构建时间。
 
 递归验证目录中的镜像：
 
@@ -128,6 +132,34 @@ bool completed = verifier.TryVerify(image, out QcomImageVerificationResult verif
 
 内存 API 不会复制最外层镜像缓冲区，但证书对象、结果字符串和可选 PEM 等仍会产生必要分配。
 
+### 分析 Firehose 命令
+
+`QcomImageParser` 会在正常解析流程中自动分析 Firehose 命令，并将结果放入 `QcomImageParseResult.SupportedCommands`。没有识别到可信命令分发结构时该集合为空，不会改变镜像结构解析的成功状态：
+
+```csharp
+var parser = new QcomImageParser();
+if (!parser.TryParse("prog_firehose_ddr.elf", out QcomImageParseResult result))
+{
+    Console.Error.WriteLine(result.ErrorMessage);
+    return;
+}
+
+foreach (FirehoseCommandInfo command in result.SupportedCommands)
+{
+    Console.WriteLine($"{command.Name}: {command.Source}");
+    if (command.HandlerAddress.HasValue)
+        Console.WriteLine($"  handler = 0x{command.HandlerAddress.Value:X}");
+}
+```
+
+分析器不依赖 ELF 节表。它枚举文件中的有效小端 ELF32/ELF64，按各自的 `PT_LOAD` 建立虚拟地址映射；也支持带 80 B 头的 Qualcomm SBL MBN，并根据头部启动配置选择 ARM32 或 AArch64 映射。命令表既可以是连续 `{namePointer, handler}` 指针对，也可以是 `char name[32] + handler` 固定槽。对于运行时解密 handler 表的镜像，还可在 `Calling handler` 调度锚点前恢复连续的明文命令池，但不会伪造无法静态确定的 handler 地址。
+
+固定命令表优先从 `Supported Functions` 日志调用附近的 ARM 数据流恢复声明数量、表基址和遍历步长。每个日志引用使用独立的有界证据窗口，步长必须关联到同一表基址；同等级证据冲突时会放弃声明数量并回退到连续表结构扫描。
+
+`CommandTable` 来源包含表项和处理地址；`InlineDispatch` 表示命令来自直接比较分发或受调度锚定的明文命令池，因此不一定存在独立表项或可恢复的 handler 地址。对于 AArch64 和 ARM32 programmer，分析器会跟踪 XML tag getter 的返回值到字符串比较参数。A32/Thumb 无表布局还会解析地址构造、寄存器复制、比较调用、条件分支和处理调用；只有共享同一比较器并包含多个 Firehose 核心命令的连续比较链才会被接受。诊断文本只作为已有分发证据的保守补充。例如小米认证流程中的 `sig` 可在没有固定诊断文案时识别，同时不会把 `TargetName` 属性值 `req`，或 `storage_type`、`reset`、`off` 等属性/值当作 XML tag。结果属于静态分析结论，不保证命令在当前认证状态、存储介质或目标设备上一定可用。
+
+CLI 的普通文本输出会在镜像信息后列出支持命令；使用 `--json` 时，同一 `QcomImageParseResult` 对象通过 `SupportedCommands` 字段输出命令名称、来源、内嵌 ELF 偏移（SBL MBN 为 0）及可用的表项/处理地址。
+
 ## 验证结果语义
 
 `TryVerify` 的返回值表示验证流程能否完成，而不是镜像是否通过验证：
@@ -206,6 +238,7 @@ Parser 与 Verifier 使用独立选项类型，特别是 `ExportCertificatePem` 
 | --- | --- | --- |
 | `CalculateFileSha256` | `false` | 计算完整输入的 SHA-256 |
 | `ExportCertificatePem` | `true` | 在结果中生成证书 PEM 文本 |
+| `AnalyzeFirehoseCommands` | `true` | 对识别为 programmer 的镜像执行 Firehose 命令静态分析 |
 | `MaximumImageSize` | `512 MiB` | 文件与内存输入的字节上限，最小为 1 B |
 | `MaximumCertificateChainSize` | `1 MiB` | 单个 QTI/OEM 证书包的字节上限，范围为 1 B-64 MiB |
 | `MaximumCertificateCount` | `32` | 单个 QTI/OEM 证书包的证书数量上限，范围为 1-64 |
@@ -248,7 +281,7 @@ QcomImageUtils <镜像或目录路径> [更多路径] [--verify] [--trusted-root
 
 | 退出码 | 含义 |
 | --- | --- |
-| `0` | 解析模式下全部解析成功；验证模式下全部输入均完成验证且 `IsVerified=true` |
+| `0` | 解析模式下全部成功；验证模式下全部输入均完成验证且 `IsVerified=true` |
 | `1` | 至少一个输入解析失败、验证无法完成或 `IsVerified=false` |
 | `2` | 参数错误、目录枚举失败、可信 Root 参数无效或没有可处理文件 |
 
@@ -257,6 +290,7 @@ QcomImageUtils <镜像或目录路径> [更多路径] [--verify] [--trusted-root
 - 内存 API 直接在调用方提供的 `ReadOnlySpan<byte>` 上解析，热路径使用显式小端读取和切片，不复制最外层镜像。
 - 文件 API 使用启用 `SequentialScan` 的 `FileStream` 和 128 KiB 流缓冲区，但仍会一次分配并载入完整文件；峰值内存至少接近文件大小。
 - 多 ELF 验证复用同一输入缓冲区，通过 Span 切片处理组件，不为每个组件复制完整镜像。
+- Firehose 命令分析按 Span 扫描所有有效 ELF 和 file-backed `PT_LOAD`，不调用外部反汇编器，也不依赖节名或调试符号。
 - 双签验证需要将对侧签名区域视为零时，会按遮罩区间增量哈希并注入零字节，不复制完整签名前缀。
 - 证书包验证缓存证书签名关系，并只让有效路径终端 Root 参与 metadata 和外部信任匹配。
 - 完整文件 SHA-256 默认关闭；Verifier 和 CLI 的 PEM 导出默认关闭，可减少额外计算与分配。
@@ -272,6 +306,7 @@ QcomImageUtils <镜像或目录路径> [更多路径] [--verify] [--trusted-root
 - 本项目不实现 PIL（Peripheral Image Loader）的加载、重定位、解密、设备认证或执行流程。
 - 对签名后被加密、混淆或修改且镜像内不含可识别解密参数的载荷，验证器会报告段摘要不一致，不会根据高熵特征改判为通过。
 - 解析成功或密码学验证通过都不能单独作为刷写安全、Secure Boot 兼容或设备可启动的结论。
+- Firehose 命令分析是受结构和上下文约束的启发式结果，不能替代协议交互、认证状态或设备端行为验证。
 
 ## 开发、测试与发布
 

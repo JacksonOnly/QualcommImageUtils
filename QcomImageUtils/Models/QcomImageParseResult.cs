@@ -37,6 +37,8 @@ public sealed class QcomImageParseResult
     public string RootCaSubject { get; internal set; } = string.Empty;
     public string RootCaHash { get; internal set; } = string.Empty;
     public IReadOnlyList<ImageCertItem> CertChains { get; internal set; } = Array.Empty<ImageCertItem>();
+    public IReadOnlyList<FirehoseCommandInfo> SupportedCommands { get; internal set; } =
+        Array.Empty<FirehoseCommandInfo>();
     public string? ErrorMessage { get; internal set; }
     public string? BuildTimeDebug { get; internal set; }
 }

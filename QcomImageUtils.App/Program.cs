@@ -258,6 +258,28 @@ static void PrintResult(QcomImageParseResult result)
     Console.WriteLine($"  证书数: {result.CertChains.Count}");
     if (!string.IsNullOrEmpty(result.FileSha256))
         Console.WriteLine($"  SHA-256: {result.FileSha256}");
+    if (!string.IsNullOrEmpty(result.BuildTime))
+        Console.WriteLine($"  构建时间: {result.BuildTime}");
+    if (result.SupportedCommands.Count == 0)
+        return;
+
+    Console.WriteLine($"  支持命令: {result.SupportedCommands.Count}");
+    for (int index = 0; index < result.SupportedCommands.Count; index++)
+    {
+        FirehoseCommandInfo command = result.SupportedCommands[index];
+        if (command.HandlerAddress.HasValue && command.TableEntryAddress.HasValue)
+        {
+            Console.WriteLine(
+                $"  {command.Name}: 表项 0x{command.TableEntryAddress.Value:X}, "
+                + $"处理地址 0x{command.HandlerAddress.Value:X}, "
+                + $"映像偏移 0x{command.ElfImageOffset:X}");
+        }
+        else
+        {
+            Console.WriteLine(
+                $"  {command.Name}: 内联分发, 映像偏移 0x{command.ElfImageOffset:X}");
+        }
+    }
 }
 
 static void PrintVerification(QcomImageVerificationResult result)

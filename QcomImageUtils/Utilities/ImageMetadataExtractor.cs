@@ -5,12 +5,19 @@ using QcomImageUtils.Models;
 
 namespace QcomImageUtils.Utilities;
 
-internal static class ImageMetadataExtractor
+internal static partial class ImageMetadataExtractor
 {
-    private static readonly byte[] QcVersionPrefix = Encoding.ASCII.GetBytes("QC_IMAGE_VERSION_STRING=");
-    private static readonly byte[] OemVersionPrefix = Encoding.ASCII.GetBytes("OEM_IMAGE_VERSION_STRING=");
-    private static readonly byte[] ImageVariantPrefix = Encoding.ASCII.GetBytes("IMAGE_VARIANT_STRING=");
-    private static readonly byte[] BuildDatePrefix = Encoding.ASCII.GetBytes("Binary build date: %s @ %s\0");
+    private const string QcVersionKey = "QC_IMAGE_VERSION_STRING=";
+    private const string OemVersionKey = "OEM_IMAGE_VERSION_STRING=";
+    private const string ImageVariantKey = "IMAGE_VARIANT_STRING=";
+    private const string BuildDateFormat = "Binary build date: %s @ %s";
+    private const ushort ArmMachine = ArmExecutableImageReader.ArmMachine;
+    private const ushort Arm64Machine = ArmExecutableImageReader.Arm64Machine;
+
+    private static readonly byte[] QcVersionPrefix = Encoding.ASCII.GetBytes(QcVersionKey);
+    private static readonly byte[] OemVersionPrefix = Encoding.ASCII.GetBytes(OemVersionKey);
+    private static readonly byte[] ImageVariantPrefix = Encoding.ASCII.GetBytes(ImageVariantKey);
+    private static readonly byte[] BuildDatePrefix = Encoding.ASCII.GetBytes(BuildDateFormat + "\0");
     private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
     private static readonly string[] BuildTimeFormats =
     {
@@ -23,11 +30,41 @@ internal static class ImageMetadataExtractor
     public static void Extract(
         ReadOnlySpan<byte> image,
         int maximumStringLength,
-        QcomImageParseResult result)
+        QcomImageParseResult result,
+        int? preferredElfOffset = null)
     {
-        result.QcVersion = ExtractValue(image, QcVersionPrefix, maximumStringLength);
-        result.OemVersion = ExtractValue(image, OemVersionPrefix, maximumStringLength);
-        result.ImageVariant = ExtractValue(image, ImageVariantPrefix, maximumStringLength);
+        VersionMetadataValues versionValues = ExtractReferencedVersionValues(
+            image,
+            maximumStringLength,
+            preferredElfOffset,
+            out bool hasAnalyzableCode);
+        result.QcVersion = !string.IsNullOrEmpty(versionValues.QcVersion)
+            ? versionValues.QcVersion
+            : hasAnalyzableCode
+                ? string.Empty
+                : ExtractValue(image, QcVersionPrefix, maximumStringLength);
+        result.OemVersion = !string.IsNullOrEmpty(versionValues.OemVersion)
+            ? versionValues.OemVersion
+            : hasAnalyzableCode
+                ? string.Empty
+                : ExtractValue(image, OemVersionPrefix, maximumStringLength);
+        result.ImageVariant = !string.IsNullOrEmpty(versionValues.ImageVariant)
+            ? versionValues.ImageVariant
+            : hasAnalyzableCode
+                ? string.Empty
+                : ExtractValue(image, ImageVariantPrefix, maximumStringLength);
+
+        if (!string.IsNullOrEmpty(versionValues.BuildTime))
+        {
+            result.BuildTime = versionValues.BuildTime;
+            return;
+        }
+
+        if (hasAnalyzableCode)
+        {
+            result.BuildTimeDebug = versionValues.BuildTimeDebug;
+            return;
+        }
 
         int patternOffset = image.IndexOf(BuildDatePrefix);
         if (patternOffset < 0)
@@ -41,23 +78,48 @@ internal static class ImageMetadataExtractor
         }
 
         int timeOffset = dateOffset + dateLength + 1;
-        string time = TryExtractNullTerminated(image, timeOffset, maximumStringLength, out string parsedTime, out _)
+        string? time = TryExtractNullTerminated(image, timeOffset, maximumStringLength, out string parsedTime, out _)
             ? parsedTime
             : string.Empty;
-        string value = string.IsNullOrEmpty(time) ? date : date + " " + time;
+        if (time is not null && time.Length > 9)
+        {
+            time = null;
+        }
+        string value = CombineBuildTimeParts(date, time);
+        if (TryNormalizeBuildTime(value, out string buildTime))
+        {
+            result.BuildTime = buildTime;
+            return;
+        }
 
+        result.BuildTimeDebug = $"无法解析构建时间: {value}";
+    }
+
+    private static string CombineBuildTimeParts(string date, string? time)
+    {
+        string normalizedTime = time?.Trim() ?? string.Empty;
+        return normalizedTime.Length is > 0 and <= 9
+            ? date + " " + normalizedTime
+            : date;
+    }
+
+    private static bool TryNormalizeBuildTime(string value, out string buildTime)
+    {
         if (DateTime.TryParseExact(
                 value,
                 BuildTimeFormats,
                 CultureInfo.InvariantCulture,
                 DateTimeStyles.AllowWhiteSpaces,
-                out DateTime buildTime))
+                out DateTime parsedBuildTime))
         {
-            result.BuildTime = buildTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-            return;
+            buildTime = parsedBuildTime.ToString(
+                "yyyy-MM-dd HH:mm:ss",
+                CultureInfo.InvariantCulture);
+            return true;
         }
 
-        result.BuildTimeDebug = $"无法解析构建时间: {value}";
+        buildTime = string.Empty;
+        return false;
     }
 
     private static string ExtractValue(

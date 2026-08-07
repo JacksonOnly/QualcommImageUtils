@@ -13,6 +13,8 @@ using QcomImageUtils.Models;
 [JsonSerializable(typeof(QcomImageComponentVerificationResult[]))]
 [JsonSerializable(typeof(QcomImageVerificationResult))]
 [JsonSerializable(typeof(QcomImageVerificationResult[]))]
+[JsonSerializable(typeof(FirehoseCommandInfo))]
+[JsonSerializable(typeof(FirehoseCommandInfo[]))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
     public static AppJsonSerializerContext Unicode { get; } = new(new JsonSerializerOptions

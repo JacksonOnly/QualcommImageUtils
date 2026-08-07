@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
-using System.Security;
 using QcomImageUtils.Constants;
 using QcomImageUtils.Models;
 using QcomImageUtils.Types;
@@ -16,9 +14,9 @@ namespace QcomImageUtils;
 public sealed class QcomImageParser : IQcomImageParser
 {
     private static readonly byte[] ElfMagic = { 0x7F, (byte)'E', (byte)'L', (byte)'F' };
-    private const uint SblCodeword = 0x844BDCD1;
-    private const uint SblMagic = 0x73D71034;
-    private const int SblHeaderSize = 80;
+    private const uint SblCodeword = ArmExecutableImageReader.SblCodeword;
+    private const uint SblMagic = ArmExecutableImageReader.SblMagic;
+    private const int SblHeaderSize = ArmExecutableImageReader.SblHeaderSize;
     private const uint ProgrammerSoftwareId = 3;
     private const uint ProgrammerImageId = 5;
 
@@ -28,6 +26,7 @@ public sealed class QcomImageParser : IQcomImageParser
     private readonly int _maximumCertificateChainSize;
     private readonly int _maximumCertificateCount;
     private readonly int _maximumMetadataStringLength;
+    private readonly FirehoseCommandAnalyzer? _firehoseCommandAnalyzer;
 
     public QcomImageParser(QcomImageParserOptions? options = null)
     {
@@ -47,67 +46,35 @@ public sealed class QcomImageParser : IQcomImageParser
         _maximumCertificateChainSize = options.MaximumCertificateChainSize;
         _maximumCertificateCount = options.MaximumCertificateCount;
         _maximumMetadataStringLength = options.MaximumMetadataStringLength;
+        if (options.AnalyzeFirehoseCommands)
+        {
+            _firehoseCommandAnalyzer = new FirehoseCommandAnalyzer(new FirehoseCommandAnalyzerOptions
+            {
+                MaximumImageSize = options.MaximumImageSize
+            });
+        }
     }
 
     public bool TryParse(string filePath, out QcomImageParseResult result)
     {
         result = new QcomImageParseResult();
-        if (string.IsNullOrWhiteSpace(filePath))
-            return Complete(result, false, "镜像路径不能为空");
-
-        try
+        if (!ImageFileReader.TryRead(
+                filePath,
+                _maximumImageSize,
+                out byte[] image,
+                out string fullPath,
+                out string fileName,
+                out string error))
         {
-            string fullPath = Path.GetFullPath(filePath);
             result.OriginalFilePath = fullPath;
-            result.OriginalFileName = Path.GetFileName(fullPath);
-            using var stream = new FileStream(
-                fullPath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                128 * 1024,
-                FileOptions.SequentialScan);
-            long fileLength = stream.Length;
-            if (fileLength <= 0)
-                return Complete(result, false, "镜像文件为空");
-            if (fileLength > _maximumImageSize)
-                return Complete(result, false, $"镜像文件超过配置的 {_maximumImageSize} 字节上限");
+            result.OriginalFileName = fileName;
+            return Complete(result, false, error);
+        }
 
-#if NET5_0_OR_GREATER
-            byte[] image = GC.AllocateUninitializedArray<byte>(checked((int)fileLength));
-#else
-            var image = new byte[checked((int)fileLength)];
-#endif
-            int offset = 0;
-            while (offset < image.Length)
-            {
-                int read = stream.Read(image, offset, image.Length - offset);
-                if (read == 0)
-                    return Complete(result, false, "读取镜像时遇到意外的文件末尾");
-                offset += read;
-            }
-            if (stream.ReadByte() >= 0)
-                return Complete(result, false, "读取镜像时文件长度发生变化");
-
-            string originalPath = result.OriginalFilePath;
-            string originalName = result.OriginalFileName;
-            bool success = TryParse(image, out result);
-            result.OriginalFilePath = originalPath;
-            result.OriginalFileName = originalName;
-            return success;
-        }
-        catch (FileNotFoundException)
-        {
-            return Complete(result, false, "镜像文件不存在");
-        }
-        catch (Exception exception) when (exception is IOException
-                                           or UnauthorizedAccessException
-                                           or SecurityException
-                                           or NotSupportedException
-                                           or ArgumentException)
-        {
-            return Complete(result, false, $"无法读取镜像: {exception.Message}");
-        }
+        bool success = TryParse(image, out result);
+        result.OriginalFilePath = fullPath;
+        result.OriginalFileName = fileName;
+        return success;
     }
 
     public bool TryParse(ReadOnlySpan<byte> image, out QcomImageParseResult result)
@@ -123,10 +90,14 @@ public sealed class QcomImageParser : IQcomImageParser
             string fileSha256 = string.Empty;
             if (_calculateFileSha256)
                 fileSha256 = HashUtility.ComputeSha256Hex(image);
+            int selectedElfOffset = -1;
 
             if (!TryAnalyzeSblMbn(image, out QcomImageParseResult sblResult))
             {
-                if (!TryAnalyzeElf(image, out QcomImageParseResult elfResult))
+                if (!TryAnalyzeElf(
+                        image,
+                        out QcomImageParseResult elfResult,
+                        out selectedElfOffset))
                 {
                     if (!TryAnalyzeRegularMbn(image, out QcomImageParseResult mbnResult))
                     {
@@ -152,8 +123,20 @@ public sealed class QcomImageParser : IQcomImageParser
             }
 
             result.FileSha256 = fileSha256;
-            ImageMetadataExtractor.Extract(image, _maximumMetadataStringLength, result);
             FinalizeResult(result);
+            ImageMetadataExtractor.Extract(
+                image,
+                _maximumMetadataStringLength,
+                result,
+                selectedElfOffset >= 0 ? selectedElfOffset : null);
+            if (result.IsProgrammer
+                && _firehoseCommandAnalyzer is not null
+                && _firehoseCommandAnalyzer.TryAnalyze(
+                    image,
+                    out FirehoseCommandAnalysisResult commandAnalysis))
+            {
+                result.SupportedCommands = commandAnalysis.Commands;
+            }
             return Complete(result, true, string.Empty);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -164,9 +147,11 @@ public sealed class QcomImageParser : IQcomImageParser
 
     private bool TryAnalyzeElf(
         ReadOnlySpan<byte> image,
-        out QcomImageParseResult result)
+        out QcomImageParseResult result,
+        out int selectedElfOffset)
     {
         result = new QcomImageParseResult();
+        selectedElfOffset = -1;
         int searchOffset = 0;
         string? lastError = null;
         while (searchOffset <= image.Length - ElfMagic.Length)
@@ -211,6 +196,7 @@ public sealed class QcomImageParser : IQcomImageParser
                 if (TryApplyHashSegment(hashSegment, info, candidate))
                 {
                     result = candidate;
+                    selectedElfOffset = elfOffset;
                     return true;
                 }
 
@@ -309,13 +295,11 @@ public sealed class QcomImageParser : IQcomImageParser
         result.IsSbl = true;
         result.ImageId = imageId;
         result.ImageType = (QcomImageType)imageId;
-        byte architecture = (byte)(bootConfiguration & 0x0F);
-        result.SblType = architecture switch
-        {
-            (byte)SblType.SblAarch64 => SblType.SblAarch64,
-            (byte)SblType.SblAarch32 => SblType.SblAarch32,
-            _ => Types.SblType.Unknown
-        };
+        result.SblType = ArmExecutableImageReader.TryDecodeSblArchitecture(
+            bootConfiguration,
+            out bool isArm64)
+            ? isArm64 ? SblType.SblAarch64 : SblType.SblAarch32
+            : Types.SblType.Unknown;
 
         if (certificateSize == 0)
             return true;
