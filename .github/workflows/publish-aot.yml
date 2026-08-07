@@ -20,6 +20,10 @@ jobs:
     name: Build and test
     runs-on: windows-latest
     timeout-minutes: 15
+    outputs:
+      version_date: ${{ steps.version.outputs.version_date }}
+      version_hash: ${{ steps.version.outputs.version_hash }}
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout
@@ -29,6 +33,24 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+
+      - name: Generate version
+        id: version
+        shell: pwsh
+        run: |
+          $versionDate = [DateTime]::UtcNow.ToString(
+            'yyyy.M.d',
+            [System.Globalization.CultureInfo]::InvariantCulture)
+          $versionHash = '${{ github.sha }}'.Substring(0, 7)
+          $version = "$versionDate-g$versionHash"
+
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VersionDate=$versionDate"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VersionHash=$versionHash"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version_date=$versionDate"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version_hash=$versionHash"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version=$version"
+
+          Write-Host "Build version: $version"
 
       - name: Restore
         run: dotnet restore QualcommImageUtils.slnx
@@ -47,6 +69,9 @@ jobs:
     needs: ci
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      VersionDate: ${{ needs.ci.outputs.version_date }}
+      VersionHash: ${{ needs.ci.outputs.version_hash }}
     strategy:
       fail-fast: false
       matrix:
@@ -73,8 +98,7 @@ jobs:
         shell: pwsh
         run: |
           $rid = '${{ matrix.rid }}'
-          $buildDate = [DateTime]::UtcNow.ToString('yyyyMMdd')
-          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+          $version = '${{ needs.ci.outputs.version }}'
           $project = Join-Path $env:GITHUB_WORKSPACE 'QcomImageUtils.App\QcomImageUtils.App.csproj'
           $output = Join-Path $env:GITHUB_WORKSPACE "artifacts\$rid"
 
@@ -90,7 +114,7 @@ jobs:
           }
 
           $source = Join-Path $output 'QcomImageUtils.App.exe'
-          $fileName = "QcomImageUtils.App_${rid}_aot_${buildDate}_${shortSha}.exe"
+          $fileName = "QcomImageUtils.App_${rid}_aot_${version}.exe"
           $destination = Join-Path $output $fileName
           Move-Item -LiteralPath $source -Destination $destination -Force
 
