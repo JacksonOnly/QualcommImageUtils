@@ -1,5 +1,7 @@
 # QcomImageUtils
 
+[![CI and Publish Native AOT](https://github.com/JacksonOnly/QualcommImageUtils/actions/workflows/publish-aot.yml/badge.svg)](https://github.com/JacksonOnly/QualcommImageUtils/actions/workflows/publish-aot.yml)
+
 QcomImageUtils 是面向 Qualcomm ELF/MBN 固件镜像的高性能只读解析、Firehose 命令分析与密码学验证工具。它可以识别镜像封装与 MBN 版本，提取镜像、平台、OEM、构建元数据和 QTI/OEM 证书信息，静态分析 Firehose 支持命令，并验证 ELF 哈希表、镜像签名、证书路径、metadata Root 哈希及可选的外部可信 Root。
 
 仓库包含两个可直接使用的项目：
@@ -310,6 +312,14 @@ QcomImageUtils <镜像或目录路径> [更多路径] [--verify] [--trusted-root
 - Firehose 命令分析是受结构和上下文约束的启发式结果，不能替代协议交互、认证状态或设备端行为验证。
 
 ## 开发、测试与发布
+
+每次向仓库执行 `push` 时，[`publish-aot.yml`](.github/workflows/publish-aot.yml) 会先执行 Release 构建、全量测试和格式检查。CI 通过后，工作流会并行发布 `win-arm64`、`win-x64` 和 `win-x86` Native AOT，并将三个 EXE 分别上传到该次 GitHub Actions 运行的 Artifacts，保留 14 天。也可以在 Actions 页面通过 `workflow_dispatch` 手动运行。
+
+产物文件名同时包含 UTC 构建日期和 7 位提交哈希，例如：
+
+```text
+QcomImageUtils.App_win-x64_aot_20260807_1a2b3c4.exe
+```
 
 运行测试：
 
