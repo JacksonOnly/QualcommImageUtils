@@ -41,6 +41,7 @@ public sealed class QcomImageParseResult
     public IReadOnlyList<ImageCertItem> CertChains { get; internal set; } = Array.Empty<ImageCertItem>();
     public IReadOnlyList<FirehoseCommandInfo> SupportedCommands { get; internal set; } =
         Array.Empty<FirehoseCommandInfo>();
+    public ulong? MaxPayloadSizeToTargetInBytesSupported { get; internal set; }
     public string? ErrorMessage { get; internal set; }
     public string? BuildTimeDebug { get; internal set; }
 }

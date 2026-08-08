@@ -66,6 +66,8 @@ dotnet run --project QcomImageUtils.App/QcomImageUtils.App.csproj -c Release -- 
 
 ### 解析镜像
 
+> 对于SM8850之后的镜像解析，一些结果可能不在prog_*的引导中，可能会在xbl_sc.efl中出现，例如ImageVariant等字段
+
 `QcomImageParser` 实现 `IQcomImageParser`，提供文件和内存重载：
 
 ```csharp

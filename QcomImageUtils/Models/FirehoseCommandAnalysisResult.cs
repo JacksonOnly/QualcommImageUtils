@@ -12,6 +12,7 @@ public sealed class FirehoseCommandAnalysisResult
     public string OriginalFilePath { get; internal set; } = string.Empty;
     public string OriginalFileName { get; internal set; } = string.Empty;
     public int AnalyzedElfCount { get; internal set; }
+    public ulong? MaxPayloadSizeToTargetInBytesSupported { get; internal set; }
     public IReadOnlyList<FirehoseCommandInfo> Commands { get; internal set; } =
         Array.Empty<FirehoseCommandInfo>();
     public string? ErrorMessage { get; internal set; }

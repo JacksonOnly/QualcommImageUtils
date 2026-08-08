@@ -157,6 +157,17 @@ public sealed class FirehoseCommandAnalyzer : IFirehoseCommandAnalyzer
             for (int index = 0; index < elfImages.Count; index++)
             {
                 ElfImage elfImage = elfImages[index];
+                if (FirehosePayloadSizeAnalyzer.TryAnalyze(
+                        image,
+                        elfImage,
+                        out ulong supportedPayloadSize)
+                    && (!result.MaxPayloadSizeToTargetInBytesSupported.HasValue
+                        || supportedPayloadSize
+                        > result.MaxPayloadSizeToTargetInBytesSupported.Value))
+                {
+                    result.MaxPayloadSizeToTargetInBytesSupported = supportedPayloadSize;
+                }
+
                 CommandTable? commandTable = FindBestCommandTable(image, elfImage);
                 var tableNames = new HashSet<string>(StringComparer.Ordinal);
                 if (commandTable is not null)
@@ -188,7 +199,8 @@ public sealed class FirehoseCommandAnalyzer : IFirehoseCommandAnalyzer
                     commands);
             }
 
-            if (commands.Count == 0)
+            if (commands.Count == 0
+                && !result.MaxPayloadSizeToTargetInBytesSupported.HasValue)
                 return Complete(result, false, "未发现可信的 Firehose 命令表");
 
             result.Commands = commands;

@@ -88,6 +88,50 @@ internal static class ArmInstructionDecoder
         return true;
     }
 
+    public static bool TryDecodeArm64ConditionalSelect(
+        uint instruction,
+        out int destinationRegister,
+        out int firstSourceRegister,
+        out int secondSourceRegister)
+    {
+        destinationRegister = (int)(instruction & 0x1Fu);
+        firstSourceRegister = (int)((instruction >> 5) & 0x1Fu);
+        secondSourceRegister = (int)((instruction >> 16) & 0x1Fu);
+        if ((instruction & 0x7FE00C00u) != 0x1A800000u
+            || destinationRegister >= 31)
+        {
+            destinationRegister = 0;
+            firstSourceRegister = 0;
+            secondSourceRegister = 0;
+            return false;
+        }
+
+        return true;
+    }
+
+    public static bool TryDecodeArm64WordExtension(
+        uint instruction,
+        out int destinationRegister,
+        out int sourceRegister,
+        out bool signExtends)
+    {
+        destinationRegister = (int)(instruction & 0x1Fu);
+        sourceRegister = (int)((instruction >> 5) & 0x1Fu);
+        uint opcode = instruction & 0xFFFFFC00u;
+        signExtends = opcode == 0x93407C00u;
+        if ((!signExtends && opcode != 0xD3407C00u)
+            || destinationRegister >= 31
+            || sourceRegister >= 31)
+        {
+            destinationRegister = 0;
+            sourceRegister = 0;
+            signExtends = false;
+            return false;
+        }
+
+        return true;
+    }
+
     public static bool TryDecodeArm64MoveWide(
         uint instruction,
         out int destinationRegister,
@@ -135,6 +179,61 @@ internal static class ArmInstructionDecoder
                 destinationRegister = 0;
                 return false;
         }
+    }
+
+    public static bool TryDecodeArm64MoveBitmaskImmediate(
+        uint instruction,
+        out int destinationRegister,
+        out ulong value)
+    {
+        destinationRegister = (int)(instruction & 0x1Fu);
+        value = 0;
+        bool is64Bit = (instruction & 0x80000000u) != 0;
+        int operation = (int)((instruction >> 29) & 3u);
+        int sourceRegister = (int)((instruction >> 5) & 0x1Fu);
+        uint n = (instruction >> 22) & 1u;
+        uint immr = (instruction >> 16) & 0x3Fu;
+        uint imms = (instruction >> 10) & 0x3Fu;
+        if ((instruction & 0x1F800000u) != 0x12000000u
+            || operation != 1
+            || sourceRegister != 31
+            || destinationRegister >= 31
+            || (!is64Bit && n != 0))
+        {
+            destinationRegister = 0;
+            return false;
+        }
+
+        uint lengthSource = n << 6 | (~imms & 0x3Fu);
+        int length = HighestSetBit(lengthSource);
+        if (length < 1)
+        {
+            destinationRegister = 0;
+            return false;
+        }
+
+        int elementSize = 1 << length;
+        uint levels = checked((uint)elementSize - 1);
+        uint setBits = imms & levels;
+        if (setBits == levels)
+        {
+            destinationRegister = 0;
+            return false;
+        }
+
+        int rotation = checked((int)(immr & levels));
+        ulong elementMask = elementSize == 64
+            ? ulong.MaxValue
+            : (1UL << elementSize) - 1;
+        ulong element = setBits == 63
+            ? ulong.MaxValue
+            : (1UL << checked((int)setBits + 1)) - 1;
+        element = RotateRight(element, rotation, elementSize) & elementMask;
+
+        int dataSize = is64Bit ? 64 : 32;
+        for (int shift = 0; shift < dataSize; shift += elementSize)
+            value |= element << shift;
+        return true;
     }
 
     public static bool TryDecodeArm64CompareImmediate(
@@ -192,6 +291,34 @@ internal static class ArmInstructionDecoder
             return false;
         }
 
+        return true;
+    }
+
+    public static bool TryDecodeArm64UnsignedImmediateTransfer(
+        uint instruction,
+        out int valueRegister,
+        out int baseRegister,
+        out ulong offset,
+        out bool isLoad)
+    {
+        valueRegister = (int)(instruction & 0x1Fu);
+        baseRegister = (int)((instruction >> 5) & 0x1Fu);
+        offset = 0;
+        isLoad = (instruction & 0x00400000u) != 0;
+        uint size = instruction >> 30;
+        if ((instruction & 0x3B000000u) != 0x39000000u
+            || (instruction & 0x04000000u) != 0
+            || size < 2
+            || valueRegister >= 31
+            || baseRegister >= 31)
+        {
+            valueRegister = 0;
+            baseRegister = 0;
+            isLoad = false;
+            return false;
+        }
+
+        offset = (ulong)((instruction >> 10) & 0xFFFu) << checked((int)size);
         return true;
     }
 
@@ -506,6 +633,26 @@ internal static class ArmInstructionDecoder
         immediate = isModifiedAdd || isModifiedSubtract
             ? DecodeThumbModifiedImmediate(encodedImmediate)
             : encodedImmediate;
+        return true;
+    }
+
+    public static bool TryDecodeThumbLogicalShiftLeftImmediate(
+        ushort instruction,
+        out int destinationRegister,
+        out int sourceRegister,
+        out int shift)
+    {
+        destinationRegister = instruction & 7;
+        sourceRegister = (instruction >> 3) & 7;
+        shift = (instruction >> 6) & 0x1F;
+        if ((instruction & 0xF800) != 0 || shift == 0)
+        {
+            destinationRegister = 0;
+            sourceRegister = 0;
+            shift = 0;
+            return false;
+        }
+
         return true;
     }
 
@@ -1150,6 +1297,25 @@ internal static class ArmInstructionDecoder
 
         uint unrotated = 0x80u | (immediate & 0x7Fu);
         return ArmInstructionMath.RotateRight(unrotated, (int)((immediate >> 7) & 0x1Fu));
+    }
+
+    private static int HighestSetBit(uint value)
+    {
+        for (int bit = 31; bit >= 0; bit--)
+        {
+            if ((value & 1u << bit) != 0)
+                return bit;
+        }
+
+        return -1;
+    }
+
+    private static ulong RotateRight(ulong value, int rotation, int width)
+    {
+        rotation %= width;
+        if (rotation == 0)
+            return value;
+        return value >> rotation | value << (width - rotation);
     }
 
     private static bool TryDecodeThumbWideLoadDestination(

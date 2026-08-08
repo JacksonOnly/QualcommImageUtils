@@ -145,6 +145,8 @@ public sealed class QcomImageParser : IQcomImageParser
             {
                 result.IsProgrammer = true;
                 result.SupportedCommands = commandAnalysis.Commands;
+                result.MaxPayloadSizeToTargetInBytesSupported =
+                    commandAnalysis.MaxPayloadSizeToTargetInBytesSupported;
             }
             return Complete(result, true, string.Empty);
         }

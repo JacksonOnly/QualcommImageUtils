@@ -263,6 +263,13 @@ static void PrintResult(QcomImageParseResult result)
         Console.WriteLine($"  SHA-256: {result.FileSha256}");
     if (!string.IsNullOrEmpty(result.BuildTime))
         Console.WriteLine($"  构建时间: {result.BuildTime}");
+    if (result.MaxPayloadSizeToTargetInBytesSupported.HasValue)
+    {
+        Console.WriteLine(
+            $"  MaxPayloadSizeToTargetInBytesSupported: "
+            + $"{result.MaxPayloadSizeToTargetInBytesSupported.Value} bytes "
+            + $"(0x{result.MaxPayloadSizeToTargetInBytesSupported.Value:X})");
+    }
     if (result.SupportedCommands.Count == 0)
         return;
 
