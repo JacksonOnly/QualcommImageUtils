@@ -1,4 +1,4 @@
-name: CI and Publish Native AOT
+name: CI and Release
 
 on:
   push:
@@ -12,7 +12,7 @@ env:
   DOTNET_NOLOGO: "true"
 
 concurrency:
-  group: native-aot-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,6 +24,7 @@ jobs:
       version_date: ${{ steps.version.outputs.version_date }}
       version_hash: ${{ steps.version.outputs.version_hash }}
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
 
     steps:
       - name: Checkout
@@ -38,17 +39,27 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $versionDate = [DateTime]::UtcNow.ToString(
+          $commitTimestamp = git show -s --format=%cI '${{ github.sha }}'
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to read the commit timestamp."
+          }
+
+          $commitDate = [DateTimeOffset]::Parse(
+            $commitTimestamp,
+            [System.Globalization.CultureInfo]::InvariantCulture)
+          $versionDate = $commitDate.UtcDateTime.ToString(
             'yyyy.M.d',
             [System.Globalization.CultureInfo]::InvariantCulture)
           $versionHash = '${{ github.sha }}'.Substring(0, 7)
           $version = "$versionDate-g$versionHash"
+          $tag = "v$version"
 
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "VersionDate=$versionDate"
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "VersionHash=$versionHash"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version_date=$versionDate"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version_hash=$versionHash"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version=$version"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "tag=$tag"
 
           Write-Host "Build version: $version"
 
@@ -64,7 +75,7 @@ jobs:
       - name: Verify formatting
         run: dotnet format QualcommImageUtils.slnx --verify-no-changes --no-restore --verbosity minimal
 
-  publish:
+  publish-aot:
     name: Publish ${{ matrix.rid }}
     needs: ci
     runs-on: windows-latest
@@ -122,7 +133,7 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "file_name=$fileName"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "artifact_name=$artifactName"
 
-      - name: Upload artifact
+      - name: Upload AOT artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.publish.outputs.artifact_name }}
@@ -130,3 +141,175 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+
+  pack:
+    name: Pack QcomImageUtils
+    needs: ci
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      VersionDate: ${{ needs.ci.outputs.version_date }}
+      VersionHash: ${{ needs.ci.outputs.version_hash }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore QcomImageUtils
+        run: dotnet restore QcomImageUtils/QcomImageUtils.csproj
+
+      - name: Pack QcomImageUtils
+        shell: pwsh
+        run: |
+          dotnet pack QcomImageUtils/QcomImageUtils.csproj `
+            --configuration Release `
+            --no-restore `
+            --output artifacts/packages `
+            -p:PackageVersion=${{ needs.ci.outputs.version }} `
+            -p:PackageReleaseNotes=https://github.com/JacksonOnly/QualcommImageUtils/releases/tag/${{ needs.ci.outputs.tag }} `
+            -p:ContinuousIntegrationBuild=true
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packing QcomImageUtils failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Upload NuGet artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: QcomImageUtils-nuget
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/packages/*.snupkg
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Tag and release
+    needs:
+      - ci
+      - publish-aot
+      - pack
+    if: github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download AOT artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: QcomImageUtils.App_*
+          path: artifacts/release
+          merge-multiple: true
+
+      - name: Download NuGet artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: QcomImageUtils-nuget
+          path: artifacts/release
+
+      - name: Validate release artifacts
+        shell: pwsh
+        run: |
+          $releaseDirectory = Join-Path $env:GITHUB_WORKSPACE 'artifacts\release'
+          $executables = @(Get-ChildItem -LiteralPath $releaseDirectory -Filter '*.exe' -File)
+          $packages = @(Get-ChildItem -LiteralPath $releaseDirectory -Filter '*.nupkg' -File)
+          $symbolPackages = @(Get-ChildItem -LiteralPath $releaseDirectory -Filter '*.snupkg' -File)
+
+          if ($executables.Count -ne 3 -or $packages.Count -ne 1 -or $symbolPackages.Count -ne 1) {
+            throw "Expected 3 AOT executables, 1 NuGet package, and 1 symbol package."
+          }
+
+      - name: NuGet login
+        id: nuget_login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Create and push tag
+        shell: pwsh
+        run: |
+          $tag = '${{ needs.ci.outputs.tag }}'
+          $sha = '${{ github.sha }}'
+          $existingCommit = git rev-parse --verify "refs/tags/$($tag)^{commit}" 2>$null
+
+          if ($LASTEXITCODE -eq 0) {
+            if ($existingCommit.Trim() -ne $sha) {
+              throw "Tag $tag already points to $existingCommit instead of $sha."
+            }
+
+            Write-Host "Tag $tag already exists on the expected commit."
+            exit 0
+          }
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag --annotate $tag $sha --message "Release $tag"
+          git push origin "refs/tags/$tag"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Pushing tag $tag failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Push QcomImageUtils to NuGet.org
+        shell: pwsh
+        run: |
+          $temporaryApiKey = '${{ steps.nuget_login.outputs.NUGET_API_KEY }}'
+          if ([string]::IsNullOrWhiteSpace($temporaryApiKey)) {
+            throw "NuGet trusted publishing did not return a temporary credential."
+          }
+
+          $package = Get-ChildItem artifacts/release -Filter '*.nupkg' -File -Recurse |
+            Select-Object -ExpandProperty FullName
+
+          dotnet nuget push $package `
+            --source https://api.nuget.org/v3/index.json `
+            --api-key $temporaryApiKey `
+            --skip-duplicate
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Publishing QcomImageUtils to NuGet.org failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ needs.ci.outputs.tag }}'
+          $repository = '${{ github.repository }}'
+          $assets = @(Get-ChildItem artifacts/release -File | Select-Object -ExpandProperty FullName)
+
+          gh release view $tag --repo $repository *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --repo $repository --clobber
+          }
+          else {
+            gh release create $tag @assets `
+              --repo $repository `
+              --verify-tag `
+              --title $tag `
+              --generate-notes `
+              --prerelease
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Creating GitHub release $tag failed with exit code $LASTEXITCODE."
+          }

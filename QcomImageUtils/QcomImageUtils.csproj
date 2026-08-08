@@ -7,11 +7,30 @@
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <IsPackable>true</IsPackable>
+        <PackageId>QcomImageUtils</PackageId>
+        <Authors>XYCS</Authors>
+        <Description>Read-only parser and cryptographic verifier for Qualcomm ELF and MBN firmware images.</Description>
+        <Copyright>Copyright (c) XYCS 2026</Copyright>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageProjectUrl>https://github.com/JacksonOnly/QualcommImageUtils</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/JacksonOnly/QualcommImageUtils.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <PackageTags>qualcomm elf mbn firehose firmware</PackageTags>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     </PropertyGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
       <PackageReference Include="System.Formats.Asn1" Version="10.0.0" />
       <PackageReference Include="System.Memory" Version="4.6.3" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Include="..\README.md" Pack="true" PackagePath="\" Link="README.md" />
     </ItemGroup>
 
 </Project>
