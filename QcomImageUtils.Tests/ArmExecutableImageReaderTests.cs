@@ -30,6 +30,7 @@ public sealed class ArmExecutableImageReaderTests
         Assert.Equal((ulong)sourceOffset, segment.FileOffset);
         Assert.Equal(0x1000UL, segment.VirtualAddress);
         Assert.Equal((ulong)codeSize, segment.FileSize);
+        Assert.Equal((ulong)codeSize, segment.MemorySize);
     }
 
     private static void WriteUInt32(Span<byte> image, int offset, uint value)

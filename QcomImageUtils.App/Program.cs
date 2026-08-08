@@ -243,6 +243,8 @@ static void PrintResult(QcomImageParseResult result)
     }
 
     Console.WriteLine($"  格式: {result.ImageFormat}{(result.IsSbl ? " / SBL" : string.Empty)}");
+    Console.WriteLine($"  引导内存类型: {FormatBootMemoryType(result.BootMemoryType)}");
+    Console.WriteLine($"  DRAM 代际: {FormatDramGeneration(result.DramGeneration)}");
     if (result.HeaderVersion != 0)
         Console.WriteLine($"  MBN 版本: {result.HeaderVersion}");
     if (result.ImageId.HasValue)
@@ -281,6 +283,27 @@ static void PrintResult(QcomImageParseResult result)
                 $"  {command.Name}: 内联分发, 映像偏移 0x{command.ElfImageOffset:X}");
         }
     }
+}
+
+static string FormatBootMemoryType(BootMemoryType type)
+{
+    return type switch
+    {
+        BootMemoryType.Lite => "LITE",
+        BootMemoryType.Ddr => "DDR",
+        _ => "Unknown"
+    };
+}
+
+static string FormatDramGeneration(DramGeneration generation)
+{
+    return generation switch
+    {
+        DramGeneration.Ddr4 => "DDR4 或更早",
+        DramGeneration.Ddr5 => "DDR5",
+        DramGeneration.Combo => "Combo",
+        _ => "Unknown"
+    };
 }
 
 static void PrintVerification(QcomImageVerificationResult result)

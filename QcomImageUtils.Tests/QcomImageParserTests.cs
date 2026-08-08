@@ -5,6 +5,54 @@ namespace QcomImageUtils.Tests;
 public sealed class QcomImageParserTests
 {
     [Theory]
+    [InlineData(false, 16 * 1024, 6, BootMemoryType.Unknown)]
+    [InlineData(false, 16 * 1024 + 1, 6, BootMemoryType.Lite)]
+    [InlineData(true, 1024 * 1024 - 1, 6, BootMemoryType.Lite)]
+    [InlineData(true, 1024 * 1024, 6, BootMemoryType.Unknown)]
+    [InlineData(false, 1024 * 1024 + 1, 6, BootMemoryType.Ddr)]
+    [InlineData(true, 2 * 1024 * 1024, 7, BootMemoryType.Unknown)]
+    public void TryParse_ElfMemoryOnlySegment_ClassifiesBootMemory(
+        bool is64Bit,
+        uint memorySize,
+        uint flags,
+        BootMemoryType expected)
+    {
+        byte[] image = BinaryImageFactory.CreateElf(
+            BinaryImageFactory.CreateV3(),
+            is64Bit,
+            memoryOnlySegmentSize: memorySize,
+            memoryOnlySegmentFlags: flags);
+        var parser = new QcomImageParser();
+
+        bool success = parser.TryParse(image, out var result);
+
+        Assert.True(success, result.ErrorMessage);
+        Assert.Equal(expected, result.BootMemoryType);
+    }
+
+    [Theory]
+    [InlineData("", DramGeneration.Unknown)]
+    [InlineData("DRAM Vref DQ CDC perbit", DramGeneration.Ddr4)]
+    [InlineData("DRAM_LP5", DramGeneration.Ddr5)]
+    [InlineData("DRAM_LP5_training", DramGeneration.Ddr5)]
+    [InlineData("DRAM Vref DQ CDC perbit\0DRAM_LP5_anything", DramGeneration.Combo)]
+    public void TryParse_DramMarkers_ClassifiesGeneration(
+        string markers,
+        DramGeneration expected)
+    {
+        byte[] hashSegment = BinaryImageFactory.Append(
+            BinaryImageFactory.CreateV3(),
+            System.Text.Encoding.ASCII.GetBytes(markers));
+        byte[] image = BinaryImageFactory.CreateElf(hashSegment, false);
+        var parser = new QcomImageParser();
+
+        bool success = parser.TryParse(image, out var result);
+
+        Assert.True(success, result.ErrorMessage);
+        Assert.Equal(expected, result.DramGeneration);
+    }
+
+    [Theory]
     [InlineData(false, 3)]
     [InlineData(false, 5)]
     [InlineData(false, 6)]

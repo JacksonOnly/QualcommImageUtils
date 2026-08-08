@@ -86,12 +86,15 @@ if (!parser.TryParse("xbl.elf", out QcomImageParseResult result))
 
 Console.WriteLine($"{result.ImageFormat} / MBN v{result.HeaderVersion}");
 Console.WriteLine($"SoC: {result.SocType}, OEM: {result.OemType}");
+Console.WriteLine($"Boot memory: {result.BootMemoryType}, DRAM: {result.DramGeneration}");
 
 foreach (ImageCertItem certificate in result.CertChains)
     Console.WriteLine($"{certificate.ChainType}[{certificate.Index}]: {certificate.Subject}");
 ```
 
 `TryParse` 返回 `true` 只表示结构解析成功，不表示镜像签名有效或能够在目标设备上启动。
+
+`BootMemoryType` 根据 ELF 中 `PT_LOAD`、`FileSize=0`、`MemSize>0` 且 flags 恰好为 `PF_R | PF_W` 的段推断：`16 KiB < MemSize < 1 MiB` 为 `Lite`，`MemSize > 1 MiB` 为 `Ddr`。`DramGeneration` 根据镜像中的 `DRAM Vref DQ CDC perbit` 与 `DRAM_LP5` 前缀组合输出 `Ddr4`、`Ddr5`、`Combo` 或 `Unknown`。这些字段属于启发式识别结果。
 
 ### 验证镜像
 

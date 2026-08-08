@@ -7,23 +7,27 @@ internal sealed class ArmExecutableImage(
     int imageOffset,
     int pointerSize,
     ushort machine,
-    List<ArmExecutableSegment> segments)
+    List<ArmExecutableSegment> segments,
+    List<ArmExecutableSegment>? memoryOnlySegments = null)
 {
     public int ImageOffset { get; } = imageOffset;
     public int PointerSize { get; } = pointerSize;
     public ushort Machine { get; } = machine;
     public List<ArmExecutableSegment> Segments { get; } = segments;
+    public List<ArmExecutableSegment> MemoryOnlySegments { get; } = memoryOnlySegments ?? [];
 }
 
 internal readonly struct ArmExecutableSegment(
     ulong fileOffset,
     ulong virtualAddress,
     ulong fileSize,
+    ulong memorySize,
     uint flags)
 {
     public ulong FileOffset { get; } = fileOffset;
     public ulong VirtualAddress { get; } = virtualAddress;
     public ulong FileSize { get; } = fileSize;
+    public ulong MemorySize { get; } = memorySize;
     public uint Flags { get; } = flags;
     public bool IsExecutable => (Flags & ArmExecutableImageReader.ExecutableFlag) != 0;
 }
@@ -81,6 +85,7 @@ internal static class ArmExecutableImageReader
             [new ArmExecutableSegment(
                 sourceOffset,
                 destinationAddress,
+                codeSize,
                 codeSize,
                 ExecutableFlag)]);
         return true;
@@ -196,6 +201,7 @@ internal static class ArmExecutableImageReader
         }
 
         var segments = new List<ArmExecutableSegment>();
+        var memoryOnlySegments = new List<ArmExecutableSegment>();
         for (int index = 0; index < programHeaderCount; index++)
         {
             ulong headerOffset = absoluteHeaderOffset + (ulong)index * programHeaderSize;
@@ -207,23 +213,37 @@ internal static class ArmExecutableImageReader
             ulong segmentOffset;
             ulong virtualAddress;
             ulong fileSize;
+            ulong memorySize;
             if (is64Bit)
             {
                 flags = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(4, 4));
                 segmentOffset = BinaryPrimitives.ReadUInt64LittleEndian(header.Slice(8, 8));
                 virtualAddress = BinaryPrimitives.ReadUInt64LittleEndian(header.Slice(16, 8));
                 fileSize = BinaryPrimitives.ReadUInt64LittleEndian(header.Slice(32, 8));
+                memorySize = BinaryPrimitives.ReadUInt64LittleEndian(header.Slice(40, 8));
             }
             else
             {
                 segmentOffset = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(4, 4));
                 virtualAddress = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(8, 4));
                 fileSize = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(16, 4));
+                memorySize = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(20, 4));
                 flags = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(24, 4));
             }
 
             if (fileSize == 0)
+            {
+                if (memorySize > 0)
+                {
+                    memoryOnlySegments.Add(new ArmExecutableSegment(
+                        0,
+                        virtualAddress,
+                        0,
+                        memorySize,
+                        flags));
+                }
                 continue;
+            }
             if (virtualAddress > ulong.MaxValue - fileSize
                 || (!is64Bit && virtualAddress + fileSize > (ulong)uint.MaxValue + 1)
                 || !TryAddImageOffset(imageOffset, segmentOffset, out ulong absoluteSegmentOffset)
@@ -236,6 +256,7 @@ internal static class ArmExecutableImageReader
                 absoluteSegmentOffset,
                 virtualAddress,
                 fileSize,
+                memorySize,
                 flags));
         }
 
@@ -246,7 +267,8 @@ internal static class ArmExecutableImageReader
             imageOffset,
             is64Bit ? sizeof(ulong) : sizeof(uint),
             machine,
-            segments);
+            segments,
+            memoryOnlySegments);
         return true;
     }
 

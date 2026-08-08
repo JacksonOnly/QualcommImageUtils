@@ -173,11 +173,17 @@ internal static class BinaryImageFactory
         return image;
     }
 
-    public static byte[] CreateElf(byte[] hashSegment, bool is64Bit, int prefixLength = 0)
+    public static byte[] CreateElf(
+        byte[] hashSegment,
+        bool is64Bit,
+        int prefixLength = 0,
+        uint? memoryOnlySegmentSize = null,
+        uint memoryOnlySegmentFlags = 6)
     {
         int elfHeaderSize = is64Bit ? 64 : 52;
         int programHeaderSize = is64Bit ? 56 : 32;
-        int segmentOffset = elfHeaderSize + programHeaderSize;
+        int programHeaderCount = memoryOnlySegmentSize.HasValue ? 2 : 1;
+        int segmentOffset = elfHeaderSize + programHeaderSize * programHeaderCount;
         var elf = new byte[checked(segmentOffset + hashSegment.Length)];
 
         elf[0] = 0x7F;
@@ -193,22 +199,40 @@ internal static class BinaryImageFactory
             WriteUInt64(elf, 32, checked((ulong)elfHeaderSize));
             WriteUInt16(elf, 52, checked((ushort)elfHeaderSize));
             WriteUInt16(elf, 54, checked((ushort)programHeaderSize));
-            WriteUInt16(elf, 56, 1);
+            WriteUInt16(elf, 56, checked((ushort)programHeaderCount));
             WriteUInt32(elf, elfHeaderSize, 1);
             WriteUInt32(elf, elfHeaderSize + 4, HashSegmentFlags);
             WriteUInt64(elf, elfHeaderSize + 8, checked((ulong)segmentOffset));
             WriteUInt64(elf, elfHeaderSize + 32, checked((ulong)hashSegment.Length));
+            WriteUInt64(elf, elfHeaderSize + 40, checked((ulong)hashSegment.Length));
+            if (memoryOnlySegmentSize.HasValue)
+            {
+                int memoryHeaderOffset = elfHeaderSize + programHeaderSize;
+                WriteUInt32(elf, memoryHeaderOffset, 1);
+                WriteUInt32(elf, memoryHeaderOffset + 4, memoryOnlySegmentFlags);
+                WriteUInt64(elf, memoryHeaderOffset + 16, 0x200000);
+                WriteUInt64(elf, memoryHeaderOffset + 40, memoryOnlySegmentSize.Value);
+            }
         }
         else
         {
             WriteUInt32(elf, 28, checked((uint)elfHeaderSize));
             WriteUInt16(elf, 40, checked((ushort)elfHeaderSize));
             WriteUInt16(elf, 42, checked((ushort)programHeaderSize));
-            WriteUInt16(elf, 44, 1);
+            WriteUInt16(elf, 44, checked((ushort)programHeaderCount));
             WriteUInt32(elf, elfHeaderSize, 1);
             WriteUInt32(elf, elfHeaderSize + 4, checked((uint)segmentOffset));
             WriteUInt32(elf, elfHeaderSize + 16, checked((uint)hashSegment.Length));
+            WriteUInt32(elf, elfHeaderSize + 20, checked((uint)hashSegment.Length));
             WriteUInt32(elf, elfHeaderSize + 24, HashSegmentFlags);
+            if (memoryOnlySegmentSize.HasValue)
+            {
+                int memoryHeaderOffset = elfHeaderSize + programHeaderSize;
+                WriteUInt32(elf, memoryHeaderOffset, 1);
+                WriteUInt32(elf, memoryHeaderOffset + 8, 0x200000);
+                WriteUInt32(elf, memoryHeaderOffset + 20, memoryOnlySegmentSize.Value);
+                WriteUInt32(elf, memoryHeaderOffset + 24, memoryOnlySegmentFlags);
+            }
         }
 
         hashSegment.CopyTo(elf, segmentOffset);

@@ -15,6 +15,8 @@ public sealed class QcomImageParseResult
     public QcomImageType? ImageType { get; internal set; }
     public uint HeaderVersion { get; internal set; }
     public bool IsProgrammer { get; internal set; }
+    public BootMemoryType BootMemoryType { get; internal set; }
+    public DramGeneration DramGeneration { get; internal set; }
     public bool IsSbl { get; internal set; }
     public SblType? SblType { get; internal set; }
     public uint SocHwVersion { get; internal set; }

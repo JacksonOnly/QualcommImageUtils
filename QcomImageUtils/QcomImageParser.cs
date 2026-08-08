@@ -130,6 +130,13 @@ public sealed class QcomImageParser : IQcomImageParser
                 _maximumMetadataStringLength,
                 result,
                 selectedElfOffset >= 0 ? selectedElfOffset : null);
+            BootMemoryAnalyzer.Analyze(
+                image,
+                selectedElfOffset >= 0 ? selectedElfOffset : null,
+                out BootMemoryType bootMemoryType,
+                out DramGeneration dramGeneration);
+            result.BootMemoryType = bootMemoryType;
+            result.DramGeneration = dramGeneration;
             if (_firehoseCommandAnalyzer is not null
                 && ShouldAttemptFirehoseAnalysis(result)
                 && _firehoseCommandAnalyzer.TryAnalyze(
