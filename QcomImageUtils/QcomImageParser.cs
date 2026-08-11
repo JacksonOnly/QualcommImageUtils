@@ -185,7 +185,8 @@ public sealed class QcomImageParser : IQcomImageParser
 
                 bool supportedHashSize = info.HashSize > 0
                                          && (info.UsesSha384
-                                             ? info.HashSize % 48 == 0
+                                             ? HashSegmentReader.IsSupportedSha384HashSize(
+                                                 info.Version, info.HashSize)
                                              : info.Version == 3
                                                ? info.HashSize % 20 == 0 || info.HashSize % 32 == 0
                                                : info.HashSize % 32 == 0);
@@ -236,7 +237,9 @@ public sealed class QcomImageParser : IQcomImageParser
         }
 
         bool invalidHashSize = info.HashSize == 0
-                               || info.UsesSha384 && info.HashSize % 48 != 0
+                               || info.UsesSha384
+                               && !HashSegmentReader.IsSupportedSha384HashSize(
+                                   info.Version, info.HashSize)
                                || !info.UsesSha384
                                && info.HashSize % 20 != 0
                                && info.HashSize % 32 != 0;

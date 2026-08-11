@@ -219,7 +219,10 @@ internal static class ElfHashTableVerifier
         {
             algorithm = ImageHashAlgorithm.Sha384;
             digestLength = 48;
-            return (ulong)hashCount * (uint)digestLength == info.HashSize;
+            ulong digestTableLength = (ulong)hashCount * (uint)digestLength;
+            return digestTableLength == info.HashSize
+                   || info.Version == 6
+                   && digestTableLength + 20 == info.HashSize;
         }
 
         if ((ulong)hashCount * 32 == info.HashSize)

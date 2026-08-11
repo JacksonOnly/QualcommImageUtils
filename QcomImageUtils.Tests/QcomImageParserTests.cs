@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using QcomImageUtils.Types;
 
 namespace QcomImageUtils.Tests;
@@ -184,6 +185,23 @@ public sealed class QcomImageParserTests
         Assert.Equal(6u, result.HeaderVersion);
         Assert.Equal(BinaryImageFactory.ModernProgrammerSoftwareId, result.SwId);
         Assert.False(result.IsProgrammer);
+    }
+
+    [Fact]
+    public void TryParse_V6Sha384TableWithLegacyDigestTrailer_ReturnsMbn()
+    {
+        byte[] image = BinaryImageFactory.CreateV6(16, 128);
+        Array.Resize(ref image, image.Length + 20);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(16, 4), 212);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(20, 4), 68);
+        image.AsSpan(image.Length - 20).Fill(0x7A);
+        var parser = new QcomImageParser();
+
+        bool success = parser.TryParse(image, out var result);
+
+        Assert.True(success, result.ErrorMessage);
+        Assert.Equal("MBN", result.ImageFormat);
+        Assert.Equal(6u, result.HeaderVersion);
     }
 
     [Fact]

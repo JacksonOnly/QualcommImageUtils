@@ -52,6 +52,15 @@ internal static class HashSegmentReader
     private const int V7CommonMetadataSize = 24;
     private const int V7OemMetadataSize = 224;
 
+    public static bool IsSupportedSha384HashSize(uint version, uint hashSize)
+    {
+        // 部分 Qualcomm v6 Digest 镜像会在 SHA-384 表后追加 20 字节摘要。
+        return hashSize % 48 == 0
+               || version == 6
+               && hashSize > 20
+               && (hashSize - 20) % 48 == 0;
+    }
+
     public static bool TryGetVersion(ReadOnlySpan<byte> data, out uint version)
     {
         return BinaryDataReader.TryReadUInt32LittleEndian(data, sizeof(uint), out version)
